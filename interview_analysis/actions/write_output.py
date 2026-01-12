@@ -120,7 +120,11 @@ class WriteOutputAction:
         for table in list(doc.body.tables):
             doc.body.delete(table)
 
-        summary_rows, per_doc_rows = self._collect_rows(documents, base_dir=config.base_dir)
+        summary_rows, per_doc_rows = self._collect_rows(
+            documents,
+            base_dir=config.base_dir,
+            codebook_topics=config.topics,
+        )
 
         self._append_summary_sheet(doc, summary_rows)
         self._append_transcript_sheets(doc, per_doc_rows)
@@ -134,6 +138,7 @@ class WriteOutputAction:
         documents: list[Any],
         *,
         base_dir: Path,
+        codebook_topics: list[Any] | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """
         Collect summary and per-document track records from analysis work files.
@@ -148,7 +153,12 @@ class WriteOutputAction:
                 - per-document rows (each includes sheet name and evidence rows)
         """
 
-        summary_counts: dict[tuple[str, str], dict[str, Any]] = {}
+        topic_order, orientation_order = self._build_codebook_order(codebook_topics or [])
+
+        # Pre-seed the summary with all codebook entries so zero-count rows are shown.
+        summary_counts: dict[tuple[str, str], dict[str, Any]] = self._seed_summary_counts(
+            codebook_topics or []
+        )
         per_doc: list[dict[str, Any]] = []
 
         loaded: list[dict[str, Any]] = []
@@ -299,9 +309,129 @@ class WriteOutputAction:
 
         summary_rows = sorted(
             summary_counts.values(),
-            key=lambda r: (str(r.get("topic") or ""), str(r.get("orientation") or "")),
+            key=lambda r: self._summary_sort_key(
+                r,
+                topic_order=topic_order,
+                orientation_order=orientation_order,
+            ),
         )
         return summary_rows, per_doc
+
+    def _build_codebook_order(
+        self,
+        topics: list[Any],
+    ) -> tuple[dict[str, int], dict[tuple[str, str], int]]:
+        """Build stable ordering maps from the YAML config topics.
+
+        Returns:
+            - topic_order: topic -> index
+            - orientation_order: (topic, orientation) -> index
+        """
+
+        topic_order: dict[str, int] = {}
+        orientation_order: dict[tuple[str, str], int] = {}
+
+        for t_idx, t in enumerate(topics, start=1):
+            topic_name = getattr(t, "topic", None)
+            if not isinstance(topic_name, str):
+                continue
+            topic_name = topic_name.strip()
+            if not topic_name:
+                continue
+
+            topic_order.setdefault(topic_name, t_idx)
+
+            orientations = getattr(t, "orientations", None)
+            if not isinstance(orientations, list):
+                continue
+
+            if not orientations:
+                # Topic has no explicit orientations; it will appear with "(none)".
+                orientation_order.setdefault((topic_name, "(none)"), 1)
+                continue
+
+            for o_idx, o in enumerate(orientations, start=1):
+                label = getattr(o, "label", None)
+                if not isinstance(label, str):
+                    continue
+                label = label.strip()
+                if not label:
+                    continue
+                orientation_order.setdefault((topic_name, label), o_idx)
+
+        return topic_order, orientation_order
+
+    def _seed_summary_counts(self, topics: list[Any]) -> dict[tuple[str, str], dict[str, Any]]:
+        """Create summary rows for every codebook topic/orientation pair.
+
+        This ensures the Summary sheet includes zero-count entries.
+        """
+
+        out: dict[tuple[str, str], dict[str, Any]] = {}
+        for t in topics:
+            topic_name = getattr(t, "topic", None)
+            if not isinstance(topic_name, str) or not topic_name.strip():
+                continue
+            topic_name = topic_name.strip()
+
+            orientations = getattr(t, "orientations", None)
+            if not isinstance(orientations, list) or not orientations:
+                key = (topic_name, "(none)")
+                out.setdefault(
+                    key,
+                    {
+                        "topic": topic_name,
+                        "orientation": "(none)",
+                        "count": 0,
+                        "example_quote": "",
+                    },
+                )
+                continue
+
+            for o in orientations:
+                label = getattr(o, "label", None)
+                if not isinstance(label, str) or not label.strip():
+                    continue
+                label = label.strip()
+                key = (topic_name, label)
+                out.setdefault(
+                    key,
+                    {
+                        "topic": topic_name,
+                        "orientation": label,
+                        "count": 0,
+                        "example_quote": "",
+                    },
+                )
+
+        return out
+
+    def _summary_sort_key(
+        self,
+        row: dict[str, Any],
+        *,
+        topic_order: dict[str, int],
+        orientation_order: dict[tuple[str, str], int],
+    ) -> tuple[int, int, int, str, str]:
+        """Sort summary rows by codebook order (topic, then orientations)."""
+
+        topic = str(row.get("topic") or "").strip()
+        orientation = str(row.get("orientation") or "").strip()
+
+        # Topics not found in the configured codebook go last.
+        t_idx = topic_order.get(topic, 1_000_000)
+
+        # Orientations not found in the configured topic go last.
+        o_idx = orientation_order.get((topic, orientation), 1_000_000)
+
+        # Keep the synthetic bucket last within each topic, but only when it's
+        # not part of the configured codebook (topics with no orientations use
+        # "(none)" as their only valid orientation).
+        none_bucket = 1 if orientation == "(none)" and (topic, orientation) not in orientation_order else 0
+        if none_bucket:
+            o_idx = 2_000_000
+
+        return (t_idx, none_bucket, o_idx, orientation, topic)
 
     def _resolve_from_base(self, base_dir: Path, path_value: str) -> Path:
         """Resolve a potentially-relative path from the config base dir."""
