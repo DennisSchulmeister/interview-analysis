@@ -2,6 +2,7 @@ Interview Analysis
 ==================
 
 1. [Overview](#overview)
+1. [Methodological Notes](#methodological-notes)
 1. [Important Commands](#important-commands)
 1. [Start a New Coding Project](#start-a-new-coding-project)
 1. [Transcript Format](#transcript-format)
@@ -14,14 +15,96 @@ Interview Analysis
 Overview
 --------
 
-This project is a small CLI tool to support **non-interpretive interview coding**.
-It takes interview transcripts (ODT, TXT, MD files), splits them into overlapping text segments,
-uses an LLM to assign **topics** and **orientations** to statements, and finally
-creates an `.ods` spreadsheet report with an aggregated summary and a per-transcript
-track record.
+This project is a small CLI tool for **codebook-based qualitative content analysis** over
+interview transcripts. The goal is to support a *structured, non-interpretive* coding workflow:
+you define a codebook up front (topics and optional orientations), and the program applies that
+codebook consistently across transcripts to produce an auditable evidence trail and simple
+frequency summaries.
 
-The workflow is configuration-driven via `interviews.yaml` and produces intermediate
-work files in a configured work directory (e.g. `work/segments/` and `work/analysis/`).
+At a high level, the pipeline:
+
+1. Reads interview transcripts (ODT, TXT, MD).
+2. Normalizes speaker statements and assigns stable paragraph identifiers.
+3. Splits transcripts into overlapping segments (for local context).
+4. Uses an LLM to assign **topics** (categories) and optional **orientations** (subcategories)
+	 to each statement, including a short evidence quote.
+5. Produces an `.ods` spreadsheet with an aggregated summary and a per-transcript track record.
+
+The workflow is configuration-driven via `interviews.yaml` and writes intermediate, inspectable
+YAML work files (typically `work/segments/` and `work/analysis/`) to support reproducibility and
+incremental re-runs.
+
+Methodological Notes
+--------------------
+
+### Terminology
+
+To make the outputs easier to interpret and cite, the tool uses the following terms:
+
+* **Statement**: one speaker turn that begins with a label like `Name: ...`. In TXT/Markdown,
+	unlabeled blocks are treated as continuations of the previous statement.
+* **Paragraph identifier**: a stable ID of the form `p####` within a transcript, assigned after
+	normalization (metadata lines are removed before numbering).
+* **Segment**: a window of consecutive statements used as LLM context. Segments overlap so that
+	statements near boundaries still have local context; overlap statements are marked as reference-only.
+* **Topic**: a deductive code/category from the codebook (the primary unit counted in the summary).
+* **Orientation**: an optional, topic-specific subcategory (e.g., positive/negative; clear/unclear)
+	that refines a topic assignment.
+* **Evidence quote**: a short excerpt recorded alongside a topic/orientation assignment to support
+	auditability in the final spreadsheet.
+* **Codebook**: the list of topics (and optional orientations/descriptions) defined in `interviews.yaml`.
+
+### What kinds of analysis does this tool support?
+
+This tool supports **deductive / framework-guided coding** where the codebook is specified
+in advance. Practically, it implements *categorical assignment* of one or more topics per
+statement, optionally enriched by an “orientation” dimension per topic.
+
+Supported analysis outputs:
+
+* **Per-statement categorical coding** (topic presence, and optionally topic-orientation).
+* **Within-case audit trails** (chronological evidence per transcript).
+* **Across-case frequency summaries** (counts by topic and topic-orientation, plus an example quote).
+
+### Supported coding modes (LLM strategies)
+
+The program provides two LLM calling strategies (see `analysis.strategy`):
+
+* `segment`: one LLM call per segment with the full codebook.
+	This is usually faster and cheaper for small-to-medium codebooks.
+* `topic`: one LLM call per segment **per topic**.
+	This can be more robust for large/ambiguous codebooks, at the cost of more API calls.
+
+Additionally, each topic can optionally allow multiple orientations for the same statement
+(`allow_multiple_orientations`). If multiple orientations are not allowed, the configured
+orientation order is treated as a ranking (highest → lowest) and at most one is kept.
+
+### Typical research scenarios
+
+This workflow is a good fit when you want a **structured, comparable coding** across many
+interviews, for example:
+
+* Program / intervention evaluations (e.g., perceived benefits, barriers, implementation issues).
+* Education research (e.g., attitudes toward a teaching method; uptake, workload, outcomes).
+* Organizational studies (e.g., readiness for change, compliance concerns, resource constraints).
+* Needs assessments (e.g., requested features, pain points, support requirements).
+
+It is especially useful when your research question benefits from a **traceable evidence table**
+and simple descriptive statistics (counts) rather than interpretive theme-building.
+
+### What this tool does *not* do (and how to use it responsibly)
+
+This tool is not a replacement for established qualitative methods that rely on interpretive,
+iterative theme development. In particular, it does **not** implement:
+
+* inductive thematic analysis / grounded theory coding workflows,
+* conversation analysis / discourse analysis,
+* qualitative memoing, coder adjudication workflows, or inter-rater reliability computation.
+
+Because an LLM is used for coding, results should be treated as **assisted coding** and should be
+validated by researchers (e.g., spot checks, review of the per-transcript evidence sheets, and
+refinement of codebook definitions). The intermediate work files and the `.ods` track record are
+intended to make such review feasible.
 
 Important Commands
 ------------------
