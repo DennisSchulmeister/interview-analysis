@@ -104,9 +104,9 @@ class InterviewConfig:
         base_dir:
             Directory that relative paths and glob patterns are resolved against.
         include:
-            Glob pattern for transcript files to include.
+            Glob pattern(s) for transcript files to include.
         exclude:
-            Optional glob pattern for transcript files to exclude.
+            Optional glob pattern(s) for transcript files to exclude.
         workdir:
             Directory for intermediate outputs.
         outfile:
@@ -121,13 +121,39 @@ class InterviewConfig:
 
     config_path: Path
     base_dir: Path
-    include: str
-    exclude: str | None
+    include: list[str]
+    exclude: list[str] | None
     workdir: Path
     outfile: Path
     topics: list[TopicSpec]
     segmentation: SegmentationConfig
     analysis: AnalysisConfig
+
+
+def _parse_patterns(value: Any, *, key: str, required: bool) -> list[str] | None:
+    """Parse a config field that can be a string or list of strings."""
+
+    if value is None:
+        if required:
+            raise ConfigError(f"'{key}' must be a non-empty string or a non-empty list of strings")
+        return None
+
+    if isinstance(value, str):
+        if not value.strip():
+            raise ConfigError(f"'{key}' must be a non-empty string")
+        return [value.strip()]
+
+    if isinstance(value, list):
+        out: list[str] = []
+        for idx, item in enumerate(value, start=1):
+            if not isinstance(item, str) or not item.strip():
+                raise ConfigError(f"'{key}' list entries must be non-empty strings (problem at index {idx})")
+            out.append(item.strip())
+        if required and not out:
+            raise ConfigError(f"'{key}' must be a non-empty list")
+        return out
+
+    raise ConfigError(f"'{key}' must be a string or a list of strings")
 
 
 class ConfigError(RuntimeError):
@@ -357,13 +383,10 @@ def load_config(path: Path) -> InterviewConfig:
     if missing:
         raise ConfigError(f"Config is missing required key(s): {', '.join(missing)}")
 
-    include = raw.get("include")
-    if not isinstance(include, str) or not include.strip():
-        raise ConfigError("'include' must be a non-empty string")
+    include = _parse_patterns(raw.get("include"), key="include", required=True)
+    assert include is not None
 
-    exclude = raw.get("exclude")
-    if exclude is not None and (not isinstance(exclude, str) or not exclude.strip()):
-        raise ConfigError("'exclude' must be a non-empty string if provided")
+    exclude = _parse_patterns(raw.get("exclude"), key="exclude", required=False)
 
     workdir = raw.get("workdir")
     if not isinstance(workdir, str) or not workdir.strip():
@@ -387,8 +410,8 @@ def load_config(path: Path) -> InterviewConfig:
     return InterviewConfig(
         config_path=path.resolve(),
         base_dir=base_dir,
-        include=include.strip(),
-        exclude=exclude.strip() if isinstance(exclude, str) else None,
+        include=include,
+        exclude=exclude,
         workdir=workdir_path,
         outfile=outfile_path,
         topics=topics,

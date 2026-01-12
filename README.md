@@ -148,14 +148,14 @@ Configuration (interviews.yaml)
 
 Required top-level options:
 
-* `include` (string): glob pattern for transcripts to include
+* `include` (string or list of strings): glob pattern(s) for transcripts to include
 * `workdir` (string): work directory for intermediate files (e.g. `./work`)
 * `outfile` (string): path to the final `.ods` report (e.g. `results.ods`)
 * `topics` (list): a list of topic definitions (the codebook)
 
 Optional top-level options:
 
-* `exclude` (string): glob pattern to exclude files (e.g. `"private/**"`)
+* `exclude` (string or list of strings): glob pattern(s) to exclude files (e.g. `"private/**"`)
 
 Optional sections:
 

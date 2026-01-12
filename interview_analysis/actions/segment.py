@@ -154,18 +154,24 @@ class SegmentAction:
 
         base_dir = config.base_dir
 
-        include = self._normalize_glob_pattern(config.include)
-        include_glob = str((base_dir / include).as_posix())
-        matches = glob.glob(include_glob, recursive=True)
-        paths = [Path(p) for p in matches]
+        include_patterns = config.include
+        paths: list[Path] = []
+        for pat in include_patterns:
+            include = self._normalize_glob_pattern(pat)
+            include_glob = str((base_dir / include).as_posix())
+            matches = glob.glob(include_glob, recursive=True)
+            paths.extend(Path(p) for p in matches)
 
-        exclude = config.exclude
-        if exclude:
-            exclude_norm = self._normalize_glob_pattern(exclude)
+        exclude_patterns = config.exclude or []
+        if exclude_patterns:
+            exclude_norms = [self._normalize_glob_pattern(p) for p in exclude_patterns]
             paths = [
                 p
                 for p in paths
-                if not fnmatch.fnmatch(self._rel_posix(base_dir, p), exclude_norm)
+                if not any(
+                    fnmatch.fnmatch(self._rel_posix(base_dir, p), ex)
+                    for ex in exclude_norms
+                )
             ]
 
         paths = [p for p in paths if p.is_file()]
