@@ -84,35 +84,6 @@ def _openai_base_url() -> str:
     return f"https://{host}{prefix}"
 
 
-def _strip_code_fences(text: str) -> str:
-    """
-    Strip Markdown code fences from a model response.
-
-    This is a small robustness helper for cases where the model returns JSON in
-    a fenced block like:
-
-        ```json
-        {"ok": true}
-        ```
-
-    Args:
-        text:
-            Raw response content.
-
-    Returns:
-        Content without surrounding code fences.
-    """
-
-    stripped = text.strip()
-    if not (stripped.startswith("```") and stripped.endswith("```")):
-        return stripped
-
-    inner = stripped[3:-3].strip()
-    if inner.lower().startswith("json"):
-        inner = inner[4:].strip()
-    return inner
-
-
 def _parse_json_content(content: str) -> JsonValue:
     """
     Parse JSON content from the model response.
@@ -125,10 +96,9 @@ def _parse_json_content(content: str) -> JsonValue:
         Parsed JSON value. Returns None for empty responses.
     """
 
-    prepared = _strip_code_fences(content)
-    if not prepared.strip():
+    if not content.strip():
         return None
-    return cast(JsonValue, json.loads(prepared))
+    return cast(JsonValue, json.loads(content))
 
 
 async def ai_conversation(
