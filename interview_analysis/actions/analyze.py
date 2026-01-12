@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -31,7 +31,7 @@ from interview_analysis.hash_utils import md5_file, md5_text
 from interview_analysis.yaml_io import read_yaml_mapping
 
 
-ANALYSIS_OUTPUT_VERSION = 3
+ANALYSIS_OUTPUT_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -644,7 +644,12 @@ class AnalyzeAction:
         result = await ai_conversation_json(
             [
                 {"role": "system", "content": system},
-                {"role": "user", "content": yaml.safe_dump(user_payload, sort_keys=False)},
+                {
+                    "role": "user",
+                    # Important: preserve Unicode so evidence quotes can be copied verbatim.
+                    # Otherwise PyYAML may emit escape sequences like "\\xFC" for "ü".
+                    "content": yaml.safe_dump(user_payload, sort_keys=False, allow_unicode=True),
+                },
             ]
         )
 
@@ -1305,7 +1310,8 @@ class AnalyzeAction:
             for topic, items in by_topic.items():
                 pol = orientation_policy.get(topic, {"allow_multiple": False, "rank": {}})
                 allow_multiple = bool(pol.get("allow_multiple", False))
-                rank: dict[str, int] = pol.get("rank") if isinstance(pol.get("rank"), dict) else {}
+                rank_raw = pol.get("rank")
+                rank: dict[str, int] = cast(dict[str, int], rank_raw) if isinstance(rank_raw, dict) else {}
 
                 # Deduplicate exact (topic, orientation, evidence) triplets.
                 seen: set[tuple[str, str, str]] = set()

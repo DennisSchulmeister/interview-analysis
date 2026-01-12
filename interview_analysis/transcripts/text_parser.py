@@ -36,6 +36,10 @@ class TextTranscriptParser:
         except Exception as exc:  # noqa: BLE001
             raise ParserError(f"Failed to read text file: {exc}", path=path) from exc
 
+        # Some editors export UTF-8 text with an initial BOM (U+FEFF). If left
+        # in place, it can break speaker-label and metadata detection on the
+        # first line.
+        raw = raw.lstrip("\ufeff")
         text = raw.replace("\r\n", "\n").replace("\r", "\n")
 
         blocks: list[tuple[int, str]] = []
