@@ -530,6 +530,7 @@ class AnalyzeAction:
             interviewer_labels=interviewer_labels,
             extra_instructions=[
                 "Only assign a topic/orientation if the paragraph explicitly contains textual evidence.",
+                "If the codebook provides topic descriptions or orientation descriptions, use them as hints for when to choose a topic/orientation.",
             ],
         )
 
@@ -539,7 +540,8 @@ class AnalyzeAction:
                 "For each paragraph where target=true, assign zero or more topics from the codebook. "
                 "For each assignment, if the topic defines orientations, choose exactly one allowed orientation. "
                 "If the topic has no orientations, set orientation to null (or an empty string). "
-                "provide an evidence quote that appears verbatim in the paragraph."
+                "Use codebook topic/orientation descriptions (if present) as selection hints, but do not infer beyond the paragraph text. "
+                "Always provide an evidence quote that appears verbatim in the paragraph."
             ),
             "interviewer_labels": interviewer_labels if exclude_interviewer else [],
             "codebook": codebook,
@@ -673,6 +675,9 @@ class AnalyzeAction:
         system = self._build_system_prompt(
             exclude_interviewer=exclude_interviewer,
             interviewer_labels=interviewer_labels,
+            extra_instructions=[
+                "If the topic provides a description or orientation descriptions, use them as hints for when to choose a match.",
+            ],
         )
 
         for topic in topics:
@@ -696,6 +701,7 @@ class AnalyzeAction:
                     "For each paragraph where target=true, decide whether it explicitly addresses the given topic. "
                     "If yes and an orientations list is provided, select exactly one orientation from the allowed list. "
                     "If no orientations are provided, omit orientation (or set it to null). "
+                    "Use the topic description and orientation descriptions (if provided) as selection hints, but do not infer beyond the paragraph text. "
                     "Always provide an evidence quote "
                     "that appears verbatim in the paragraph."
                 ),
