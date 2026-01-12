@@ -30,7 +30,7 @@ import yaml
 
 from interview_analysis.config import ConfigError, InterviewConfig
 from interview_analysis.hash_utils import md5_file
-from interview_analysis.transcripts.registry import read_transcript_paragraphs
+from interview_analysis.transcripts.registry import TRANSCRIPT_PARSING_VERSION, read_transcript_paragraphs
 from interview_analysis.yaml_io import read_yaml_mapping
 
 
@@ -103,6 +103,7 @@ class SegmentAction:
             "config": {
                 "path": self._rel_posix(config.base_dir, config.config_path),
             },
+            "transcript_parsing_version": TRANSCRIPT_PARSING_VERSION,
             "segmentation": {
                 "unit": "paragraph",
                 "segment_paragraphs": segment_paragraphs,
@@ -270,6 +271,7 @@ class SegmentAction:
         payload: dict[str, Any] = {
             "schema_version": 1,
             "generated_at": datetime.now(timezone.utc).isoformat(),
+            "transcript_parsing_version": TRANSCRIPT_PARSING_VERSION,
             "source": {
                 "path": rel_path,
                 "md5": transcript_md5,
@@ -312,6 +314,9 @@ class SegmentAction:
         overlap_paragraphs: int,
     ) -> bool:
         """Return True if an existing segment work file matches current inputs."""
+
+        if int(existing.get("transcript_parsing_version") or 0) != TRANSCRIPT_PARSING_VERSION:
+            return False
 
         source = existing.get("source")
         if not isinstance(source, dict):
@@ -356,30 +361,55 @@ class SegmentAction:
             A tuple of (`metadata`, `transcript_paragraphs`).
         """
 
-        interviewer_pattern = re.compile(r"^\s*interviewer\s*=\s*(.*?)\s*$", re.IGNORECASE)
+        meta_pattern = re.compile(
+            r"^\s*(?P<key>[A-Za-z][A-Za-z0-9_\-]{0,63})\s*=\s*(?P<value>.*?)\s*$",
+            re.IGNORECASE,
+        )
 
         interviewers: list[str] = []
+        fields: dict[str, Any] = {}
         transcript_paragraphs: list[dict[str, Any]] = []
         removed_metadata_paragraphs = 0
 
         for para in paragraphs:
             text = str(para.get("text", ""))
-            match = interviewer_pattern.match(text)
+            match = meta_pattern.match(text)
             if match is None:
                 transcript_paragraphs.append(para)
                 continue
 
             removed_metadata_paragraphs += 1
-            raw = (match.group(1) or "").strip()
-            if raw:
-                for part in raw.split(","):
-                    label = part.strip()
-                    if label and label not in interviewers:
-                        interviewers.append(label)
+            key = (match.group("key") or "").strip().lower()
+            raw_value = (match.group("value") or "").strip()
+
+            if key == "interviewer":
+                if raw_value:
+                    for part in raw_value.split(","):
+                        label = part.strip()
+                        if label and label not in interviewers:
+                            interviewers.append(label)
+                continue
+
+            if not raw_value:
+                continue
+
+            if key not in fields:
+                fields[key] = raw_value
+            else:
+                prev = fields[key]
+                if isinstance(prev, list):
+                    if raw_value not in prev:
+                        prev.append(raw_value)
+                elif isinstance(prev, str):
+                    if raw_value != prev:
+                        fields[key] = [prev, raw_value]
+                else:
+                    fields[key] = raw_value
 
         metadata: dict[str, Any] = {
             "interviewers": interviewers,
             "metadata_paragraphs_removed": removed_metadata_paragraphs,
+            "fields": fields,
         }
         return metadata, transcript_paragraphs
 

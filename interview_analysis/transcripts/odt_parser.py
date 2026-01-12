@@ -14,6 +14,7 @@ from typing import Any
 from odfdo import Document
 
 from interview_analysis.transcripts.base import ParserError, TranscriptParser
+from interview_analysis.transcripts.statement_blocks import parse_statement_blocks
 
 
 class OdtTranscriptParser:
@@ -32,16 +33,14 @@ class OdtTranscriptParser:
         try:
             doc = Document(path)
             body = doc.body
-            paras: list[dict[str, Any]] = []
-            source_index = 0
+
+            blocks: list[str] = []
             for p in body.get_paragraphs():
-                source_index += 1
                 text = getattr(p, "text", None)
                 if text is None:
                     text = str(p)
-                cleaned = " ".join(str(text).split())
-                if cleaned:
-                    paras.append({"source_index": source_index, "text": cleaned})
-            return paras
+                blocks.append(str(text))
+
+            return parse_statement_blocks(blocks)
         except Exception as exc:  # noqa: BLE001
             raise ParserError(f"Failed to parse ODT file '{path}': {exc}") from exc

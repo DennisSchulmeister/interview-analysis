@@ -126,6 +126,10 @@ ODT transcripts:
 	interviewer = Name1, Name2
 	```
 
+	You can also add additional metadata paragraphs in the same `key = value` form
+	(e.g. `date = 2026-01-12`, `location = Campus`). These lines are removed from
+	the transcript before segmentation and stored in the segment work file metadata.
+
 	The program uses this to identify interviewer labels and can exclude their
 	statements from coding when configured.
 
@@ -140,6 +144,12 @@ TXT/Markdown transcripts:
 	```
 	interviewer = Name1, Name2
 	```
+
+	Additional `key = value` metadata blocks are supported as well.
+	
+* Lines/blocks at the beginning of the document that do not start with a speaker
+	label are ignored until the first labeled statement (common for transcription
+	software headers) — unless the line is a metadata line in `key = value` form.
 
 	Place it as its own block (surrounded by empty lines), near the top.
 

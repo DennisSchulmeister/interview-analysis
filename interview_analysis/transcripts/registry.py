@@ -16,6 +16,12 @@ from interview_analysis.transcripts.odt_parser import OdtTranscriptParser
 from interview_analysis.transcripts.text_parser import TextTranscriptParser
 
 
+# Bump this whenever transcript parsing semantics change in a way that should
+# force regeneration of segment work files even if the underlying transcript
+# file bytes are unchanged.
+TRANSCRIPT_PARSING_VERSION = 3
+
+
 _PARSERS: list[TranscriptParser] = [
     OdtTranscriptParser(),
     TextTranscriptParser(),

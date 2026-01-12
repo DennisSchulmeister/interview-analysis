@@ -18,27 +18,14 @@ The parser only performs raw parsing and text normalization.
 """
 
 from pathlib import Path
-import re
 from typing import Any
 
 from interview_analysis.transcripts.base import ParserError, TranscriptParser
+from interview_analysis.transcripts.statement_blocks import parse_statement_blocks
 
 
 class TextTranscriptParser:
     """Parse .txt and .md transcripts into statement records."""
-
-    # Accept common Markdown prefixes (block quotes, bullet points, numbered lists)
-    # before a required `Label: ...` pattern.
-    _LABEL_RE = re.compile(
-        r"^\s*(?:>\s*)*(?:[-+*]\s+|\d+[\.)]\s+)?(?P<label>[^:\n]{1,80}):\s*\S"
-    )
-
-    # Allow the metadata marker to be formatted like normal statements in Markdown
-    # (e.g., block quotes or list items) and ignore case.
-    _INTERVIEWER_META_RE = re.compile(
-        r"^\s*(?:>\s*)*(?:[-+*]\s+|\d+[\.)]\s+)?interviewer\s*=\s*(?P<value>.*?)\s*$",
-        re.IGNORECASE,
-    )
 
     def can_read(self, path: Path) -> bool:
         return path.suffix.lower() in {".txt", ".md"}
@@ -70,40 +57,4 @@ class TextTranscriptParser:
         if current:
             blocks.append((start_line or 1, "\n".join(current).strip()))
 
-        paragraphs: list[dict[str, Any]] = []
-        statement_index = 0
-
-        for block_start_line, block in blocks:
-            cleaned = " ".join(block.split())
-            if not cleaned:
-                continue
-
-            meta = self._INTERVIEWER_META_RE.match(cleaned)
-            if meta:
-                # Keep metadata as a paragraph record so the segment action can
-                # extract it, but ensure it does not affect paragraph numbering.
-                paragraphs.append(
-                    {
-                        "source_index": 0,
-                        "text": f"interviewer = {(meta.group('value') or '').strip()}",
-                    }
-                )
-                continue
-
-            if self._LABEL_RE.match(cleaned):
-                statement_index += 1
-                paragraphs.append({"source_index": statement_index, "text": cleaned})
-                continue
-
-            if not paragraphs:
-                first_line = block.splitlines()[0].strip() if block.splitlines() else cleaned
-                # Instead of failing hard, skip unparseable leading blocks and
-                # try to continue with later blocks.
-                continue
-
-            # Continuation: append to previous statement.
-            prev = paragraphs[-1]
-            prev_text = str(prev.get("text") or "")
-            prev["text"] = (prev_text + " " + cleaned).strip()
-
-        return paragraphs
+        return parse_statement_blocks(block for _, block in blocks)
