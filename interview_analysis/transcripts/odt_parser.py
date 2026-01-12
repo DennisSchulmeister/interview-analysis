@@ -34,12 +34,39 @@ class OdtTranscriptParser:
             doc = Document(path)
             body = doc.body
 
+            def _node_text(node: object) -> str:
+                # odfdo Paragraph objects often expose richer text via
+                # `inner_text`/`text_recursive` than via `.text`.
+                for attr in ("inner_text", "text_recursive", "text"):
+                    if hasattr(node, attr):
+                        try:
+                            value = getattr(node, attr)
+                            if callable(value):
+                                value = value()
+                            if value is not None:
+                                return str(value)
+                        except Exception:
+                            pass
+                return str(node)
+
             blocks: list[str] = []
-            for p in body.get_paragraphs():
-                text = getattr(p, "text", None)
-                if text is None:
-                    text = str(p)
-                blocks.append(str(text))
+
+            # Using XPath is more robust than `get_paragraphs()` for documents
+            # converted from DOCX or containing formatted content (lists, tables,
+            # frames, etc.).
+            nodes: list[object] = []
+            try:
+                nodes = list(body.xpath(".//text:p | .//text:h"))
+            except Exception:
+                nodes = []
+
+            if nodes:
+                for n in nodes:
+                    blocks.append(_node_text(n))
+            else:
+                # Fallback for unexpected odfdo versions/doc structures.
+                for p in body.get_paragraphs():
+                    blocks.append(_node_text(p))
 
             return parse_statement_blocks(blocks)
         except Exception as exc:  # noqa: BLE001
