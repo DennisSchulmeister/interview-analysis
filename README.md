@@ -12,6 +12,10 @@ Interview Analysis
 1. [Output File Contents](#output-file-contents)
 1. [Copyright](#copyright)
 
+![Screenshot: Console Output](screenshot1.png)
+
+![Screenshot: Result File](screenshot2.png)
+
 Overview
 --------
 
