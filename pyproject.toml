@@ -13,7 +13,7 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-app = "interview_analysis.app:main"
+interview_analysis = "interview_analysis.app:main"
 
 [tool.poetry.dependencies]
 python = ">=3.13,<4"

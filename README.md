@@ -112,12 +112,12 @@ Important Commands
 ### Short version
 
 * `poetry install`: install dependencies
-* `poetry run app --help`: show CLI help
-* `poetry run app template`: create a template `interviews.yaml`
-* `poetry run app segment`: generate segmentation work files
-* `poetry run app analyze`: run the LLM coding and write analysis work files
-* `poetry run app write-output`: generate the final `.ods` report
-* `poetry run app clean`: delete intermediate work files (with safety prompts)
+* `poetry run interview_analysis --help`: show CLI help
+* `poetry run interview_analysis template`: create a template `interviews.yaml`
+* `poetry run interview_analysis segment`: generate segmentation work files
+* `poetry run interview_analysis analyze`: run the LLM coding and write analysis work files
+* `poetry run interview_analysis write-output`: generate the final `.ods` report
+* `poetry run interview_analysis clean`: delete intermediate work files (with safety prompts)
 
 ### Poetry basics
 
@@ -134,11 +134,61 @@ Common commands:
 | `poetry shell` | Open a shell with the venv activated |
 | `poetry run …` | Run a command inside the venv |
 
-The CLI entrypoint is registered in `[tool.poetry.scripts]` as `app`, so you can run:
+The CLI entrypoint is registered in `[tool.poetry.scripts]` as `interview_analysis`, so you can run:
 
 ```sh
-poetry run app --help
+poetry run interview_analysis --help
 ```
+
+### User-local shortcut (symlink into the Poetry venv)
+
+If you want to run the CLI without typing `poetry run` every time, you can create a
+user-local shortcut that points at the *current* Poetry virtualenv.
+
+From the project root:
+
+```sh
+./update_local_bin.sh
+```
+
+This creates (or recreates) the symlink:
+
+* `~/.local/bin/interview_analysis` → `<poetry-venv>/bin/interview_analysis`
+
+Notes:
+
+* If Poetry recreates the virtualenv (e.g. after dependency changes), the old symlink may become
+	broken. Re-run `./update_local_bin.sh` to update it.
+* If `~/.local/bin/interview_analysis` exists but is *not* a symlink, the script aborts to avoid
+	overwriting anything.
+* Ensure `~/.local/bin` is on your `PATH`.
+
+### Other local install options
+
+1) Editable install into your user site-packages (no isolation)
+
+From the project root:
+
+```sh
+python -m pip install --user -e .
+```
+
+This creates the console script `interview_analysis` in `~/.local/bin` and links it to your current source
+directory. Imports always resolve to your live code, and you typically don’t need `poetry run`.
+Downside: dependencies are installed into your user site-packages, so there’s no isolation from
+other `--user` installs.
+
+2) Proper isolated user install (recommended for CLIs)
+
+Use `pipx` to install the CLI in an isolated environment while still exposing the command
+globally for your user:
+
+```sh
+pipx install .
+```
+
+This provides the `interview_analysis` command on your `PATH` (isolated from other Python projects). To update
+after changes, re-run `pipx install --force .`.
 
 Environment variables
 ---------------------
@@ -172,7 +222,7 @@ Start a New Coding Project
 2. Create a template configuration:
 
 	 ```sh
-	 poetry run app template
+	 poetry run interview_analysis template
 	 ```
 
 	 This writes `./interviews.yaml`.
@@ -328,12 +378,12 @@ Run a Full Analysis
 Typical command sequence:
 
 ```sh
-poetry run app template
+poetry run interview_analysis template
 # edit interviews.yaml and place .odt transcripts in ./transcripts/
 
-poetry run app segment
-poetry run app analyze
-poetry run app write-output
+poetry run interview_analysis segment
+poetry run interview_analysis analyze
+poetry run interview_analysis write-output
 ```
 
 Cleaning the Work Directory
@@ -345,7 +395,7 @@ the program runs into errors and you want to restart from a clean state, you can
 remove all intermediate files with:
 
 ```sh
-poetry run app clean
+poetry run interview_analysis clean
 ```
 
 This command is safety-focused (prompts in an interactive terminal).
