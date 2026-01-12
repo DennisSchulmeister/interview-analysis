@@ -25,7 +25,7 @@ from typing import Any
 import yaml
 
 from interview_analysis.ai_llm import ai_conversation_json
-from interview_analysis.config import InterviewConfig
+from interview_analysis.config import ConfigError, InterviewConfig
 
 
 @dataclass(frozen=True)
@@ -96,7 +96,7 @@ class AnalyzeAction:
         segments_index = segments_dir / "index.yaml"
 
         if not segments_index.exists():
-            raise RuntimeError(
+            raise ConfigError(
                 "No segmentation index found. Run the 'segment' command first: "
                 f"{segments_index}"
             )
@@ -279,17 +279,17 @@ class AnalyzeAction:
             Parsed YAML mapping.
 
         Raises:
-            RuntimeError:
+            ConfigError:
                 If the file cannot be read or does not contain a mapping.
         """
 
         try:
             raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(f"Failed to read YAML file '{path}': {exc}") from exc
+            raise ConfigError(f"Failed to read YAML file '{path}': {exc}") from exc
 
         if not isinstance(raw, dict):
-            raise RuntimeError(f"YAML file must contain a mapping: {path}")
+            raise ConfigError(f"YAML file must contain a mapping: {path}")
         return raw
 
     def _build_codebook(self, config: InterviewConfig) -> dict[str, Any]:

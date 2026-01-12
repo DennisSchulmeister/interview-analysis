@@ -21,10 +21,10 @@ For safety:
 
 import argparse
 import shutil
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from interview_analysis.cli_io import is_interactive_tty, prompt_delete_contents
 from interview_analysis.config import ConfigError, InterviewConfig
 
 
@@ -86,29 +86,18 @@ class CleanAction:
             raise ConfigError(f"Refusing to clean dangerous workdir: {workdir}")
 
         if not args.force:
-            if not self._is_interactive_tty():
+            if not is_interactive_tty():
                 raise ConfigError(
                     "Refusing to clean without confirmation on a non-interactive TTY. "
                     "Re-run with --force."
                 )
 
-            answer = input(f"This will delete all contents of '{workdir}'. Continue? [y/N] ")
-            if answer.strip().lower() not in {"y", "yes"}:
+            if not prompt_delete_contents(workdir):
                 print("Aborted.")
                 return
 
         removed = self._empty_directory(workdir)
         print(f"Cleaned {removed} item(s) from: {workdir}")
-
-    def _is_interactive_tty(self) -> bool:
-        """
-        Determine whether we can safely prompt the user.
-
-        Returns:
-            True if both stdin and stdout are connected to a TTY.
-        """
-
-        return sys.stdin.isatty() and sys.stdout.isatty()
 
     def _is_dangerous_workdir(self, path: Path) -> bool:
         """
