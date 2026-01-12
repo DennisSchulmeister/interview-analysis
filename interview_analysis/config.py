@@ -13,7 +13,7 @@ This module handles reading `interviews.yaml`, validating required keys, and
 normalizing paths so that downstream actions can rely on a typed config object.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -91,10 +91,15 @@ class AnalysisConfig:
             Analysis strategy. Supported values:
                 - `segment`: single LLM call per segment with full codebook
                 - `topic`: multiple LLM calls per segment, one per topic
+        rules:
+            Optional list of general coding rules (short, explicit instructions)
+            applied across all topics. These are provided to the LLM in addition
+            to the codebook to reduce systematic misclassifications.
     """
 
     exclude_interviewer: bool = False
     strategy: str = "segment"
+    rules: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -498,6 +503,7 @@ def _parse_analysis(value: Any) -> AnalysisConfig:
 
     exclude_interviewer = value.get("exclude_interviewer", AnalysisConfig.exclude_interviewer)
     strategy = value.get("strategy", AnalysisConfig.strategy)
+    rules_raw = value.get("rules", None)
 
     if not isinstance(exclude_interviewer, bool):
         raise ConfigError("analysis.exclude_interviewer must be a boolean")
@@ -508,7 +514,24 @@ def _parse_analysis(value: Any) -> AnalysisConfig:
     if strategy_norm not in {"segment", "topic"}:
         raise ConfigError("analysis.strategy must be either 'segment' or 'topic'")
 
+    rules: list[str] = []
+    if rules_raw is None:
+        rules = []
+    elif isinstance(rules_raw, str):
+        if rules_raw.strip():
+            rules = [rules_raw.strip()]
+    elif isinstance(rules_raw, list):
+        for idx, item in enumerate(rules_raw, start=1):
+            if not isinstance(item, str):
+                raise ConfigError(f"analysis.rules[{idx}] must be a string")
+            text = " ".join(item.split()).strip()
+            if text:
+                rules.append(text)
+    else:
+        raise ConfigError("analysis.rules must be a string or a list of strings")
+
     return AnalysisConfig(
         exclude_interviewer=exclude_interviewer,
         strategy=strategy_norm,
+        rules=rules,
     )

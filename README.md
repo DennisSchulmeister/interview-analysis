@@ -268,6 +268,10 @@ Optional sections:
 	- `segment`: one LLM call per segment with the full codebook
 	- `topic`: one LLM call per segment per topic (more robust, more costly)
 
+* `analysis.rules` (list of strings, optional)
+	- additional global coding rules (short, explicit instructions) that are appended to the LLM prompt
+	- use this to prevent systematic confusions that are not easily expressed as topic/orientation definitions
+
 ### topics (codebook)
 
 Each entry in `topics` can be written in one of these formats:

@@ -15,6 +15,8 @@ segmentation:
 analysis:
   exclude_interviewer: true
   strategy: segment
+  rules:
+    - "Statements about how a method will be used in the future are coded under Future intentions, not Implementation approach."
 
 topics:
   - topic: Prior teaching experience
@@ -38,7 +40,7 @@ topics:
         description: Motivation framed as interest, exploration, or willingness to try something new.
 
   - topic: Implementation approach
-    description: Descriptions of how the method was introduced and used in practice.
+    description: Descriptions of how the method has been introduced and used in practice.
     orientations:
       - label: Full integration
         description: Statements describing systematic or course-wide use of the method.

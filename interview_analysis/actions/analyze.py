@@ -27,7 +27,7 @@ import yaml
 from interview_analysis.ai_llm import ai_conversation_json
 from interview_analysis.codebook import build_codebook, codebook_hash, orientations_by_topic
 from interview_analysis.config import ConfigError, InterviewConfig
-from interview_analysis.hash_utils import md5_file
+from interview_analysis.hash_utils import md5_file, md5_text
 from interview_analysis.yaml_io import read_yaml_mapping
 
 
@@ -116,6 +116,8 @@ class AnalyzeAction:
 
         codebook = build_codebook(config.topics)
         cb_hash = codebook_hash(codebook)
+        rules = list(getattr(config.analysis, "rules", []) or [])
+        rules_hash = md5_text("\n".join(rules)) if rules else ""
         allowed_orientations = orientations_by_topic(codebook)
         orientation_policy = self._build_orientation_policy(config.topics)
         strategy = config.analysis.strategy
@@ -130,6 +132,7 @@ class AnalyzeAction:
             "analysis": {
                 "strategy": strategy,
                 "exclude_interviewer": exclude_interviewer,
+                "rules": rules,
             },
             "documents": [],
         }
@@ -164,6 +167,7 @@ class AnalyzeAction:
                     segments_file=segments_file_rel,
                     segments_md5=segments_md5,
                     codebook_hash=cb_hash,
+                    rules_hash=rules_hash,
                     strategy=strategy,
                     exclude_interviewer=exclude_interviewer,
                 ):
@@ -257,6 +261,7 @@ class AnalyzeAction:
                         paragraphs=paragraph_records,
                         codebook=codebook,
                         allowed_orientations=allowed_orientations,
+                        coding_rules=rules,
                         exclude_interviewer=exclude_interviewer,
                         interviewer_labels=interviewers,
                     )
@@ -266,6 +271,7 @@ class AnalyzeAction:
                         paragraphs=paragraph_records,
                         codebook=codebook,
                         allowed_orientations=allowed_orientations,
+                        coding_rules=rules,
                         exclude_interviewer=exclude_interviewer,
                         interviewer_labels=interviewers,
                     )
@@ -295,6 +301,7 @@ class AnalyzeAction:
                     "segments_file": segments_file_rel,
                     "segments_md5": segments_md5,
                     "codebook_hash": cb_hash,
+                    "rules_hash": rules_hash,
                 },
                 "document_id": doc_id,
                 "source": seg_doc.get("source"),
@@ -302,6 +309,7 @@ class AnalyzeAction:
                 "analysis": {
                     "strategy": strategy,
                     "exclude_interviewer": exclude_interviewer,
+                    "rules": rules,
                 },
                 "codebook": codebook,
                 "segments": analyzed_segments,
@@ -335,6 +343,7 @@ class AnalyzeAction:
         segments_file: str,
         segments_md5: str,
         codebook_hash: str,
+        rules_hash: str,
         strategy: str,
         exclude_interviewer: bool,
     ) -> bool:
@@ -360,6 +369,9 @@ class AnalyzeAction:
         if str(inp.get("codebook_hash") or "") != codebook_hash:
             return False
 
+        if str(inp.get("rules_hash") or "") != rules_hash:
+            return False
+
         analysis_cfg = existing.get("analysis")
         if not isinstance(analysis_cfg, dict):
             return False
@@ -371,6 +383,16 @@ class AnalyzeAction:
             return False
 
         return True
+
+    def _format_coding_rules(self, rules: list[str]) -> str:
+        cleaned = [" ".join(r.split()).strip() for r in rules if isinstance(r, str) and r.strip()]
+        if not cleaned:
+            return ""
+
+        parts = ["Additional coding rules (apply whenever relevant):"]
+        for i, rule in enumerate(cleaned, start=1):
+            parts.append(f"{i}. {rule}")
+        return " ".join(parts)
 
     def _resolve_from_base(self, base_dir: Path, path_value: str) -> Path:
         """Resolve a potentially-relative path from the config base dir.
@@ -556,6 +578,7 @@ class AnalyzeAction:
         paragraphs: list[dict[str, Any]],
         codebook: dict[str, Any],
         allowed_orientations: dict[str, list[str]],
+        coding_rules: list[str],
         exclude_interviewer: bool,
         interviewer_labels: list[str],
     ) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
@@ -574,13 +597,18 @@ class AnalyzeAction:
             Tuple of (paragraph_id -> assignments list, errors list).
         """
 
+        extra: list[str] = [
+            "Only assign a topic/orientation if the paragraph explicitly contains textual evidence.",
+            "If the codebook provides topic descriptions or orientation descriptions, use them as hints for when to choose a topic/orientation.",
+        ]
+        rules_text = self._format_coding_rules(coding_rules)
+        if rules_text:
+            extra.append(rules_text)
+
         system = self._build_system_prompt(
             exclude_interviewer=exclude_interviewer,
             interviewer_labels=interviewer_labels,
-            extra_instructions=[
-                "Only assign a topic/orientation if the paragraph explicitly contains textual evidence.",
-                "If the codebook provides topic descriptions or orientation descriptions, use them as hints for when to choose a topic/orientation.",
-            ],
+            extra_instructions=extra,
         )
 
         user_payload = {
@@ -694,6 +722,7 @@ class AnalyzeAction:
         paragraphs: list[dict[str, Any]],
         codebook: dict[str, Any],
         allowed_orientations: dict[str, list[str]],
+        coding_rules: list[str],
         exclude_interviewer: bool,
         interviewer_labels: list[str],
     ) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
@@ -719,12 +748,17 @@ class AnalyzeAction:
         combined: dict[str, list[dict[str, Any]]] = {}
         errors: list[str] = []
 
+        extra: list[str] = [
+            "If the topic provides a description or orientation descriptions, use them as hints for when to choose a match.",
+        ]
+        rules_text = self._format_coding_rules(coding_rules)
+        if rules_text:
+            extra.append(rules_text)
+
         system = self._build_system_prompt(
             exclude_interviewer=exclude_interviewer,
             interviewer_labels=interviewer_labels,
-            extra_instructions=[
-                "If the topic provides a description or orientation descriptions, use them as hints for when to choose a match.",
-            ],
+            extra_instructions=extra,
         )
 
         for topic in topics:
