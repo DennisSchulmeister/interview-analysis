@@ -26,6 +26,7 @@ import yaml
 
 from interview_analysis.ai_llm import ai_conversation_json
 from interview_analysis.config import ConfigError, InterviewConfig
+from interview_analysis.hash_utils import md5_file
 from interview_analysis.yaml_io import read_yaml_mapping
 
 
@@ -145,6 +146,39 @@ class AnalyzeAction:
                 print(f"Skipping missing segments file: {segments_path}")
                 continue
 
+            segments_md5 = md5_file(segments_path)
+            derived_doc_id = segments_path.stem
+            out_path = analysis_dir / f"{derived_doc_id}.yaml"
+
+            if out_path.exists():
+                existing = read_yaml_mapping(out_path)
+                if self._analysis_up_to_date(
+                    existing,
+                    segments_file=str(segments_path),
+                    segments_md5=segments_md5,
+                    strategy=strategy,
+                    exclude_interviewer=exclude_interviewer,
+                ):
+                    existing_doc_id = existing.get("document_id")
+                    doc_id = (
+                        existing_doc_id.strip()
+                        if isinstance(existing_doc_id, str) and existing_doc_id.strip()
+                        else derived_doc_id
+                    )
+
+                    existing_segments = existing.get("segments")
+                    segments_total = len(existing_segments) if isinstance(existing_segments, list) else 0
+
+                    print(f"[{doc_idx}/{total_docs}] Skipping unchanged analysis: {doc_id}")
+                    analysis_index["documents"].append(
+                        {
+                            "document_id": doc_id,
+                            "analysis_file": str(out_path),
+                            "segments_total": segments_total,
+                        }
+                    )
+                    continue
+
             print(f"[{doc_idx}/{total_docs}] Loading segments: {segments_path}")
             seg_doc = read_yaml_mapping(segments_path)
 
@@ -237,6 +271,10 @@ class AnalyzeAction:
                 "config": {
                     "path": str(config.config_path),
                 },
+                "input": {
+                    "segments_file": str(segments_path),
+                    "segments_md5": segments_md5,
+                },
                 "document_id": doc_id,
                 "source": seg_doc.get("source"),
                 "metadata": metadata,
@@ -267,6 +305,39 @@ class AnalyzeAction:
             encoding="utf-8",
         )
         print(f"Wrote analysis index: {index_path}")
+
+    def _analysis_up_to_date(
+        self,
+        existing: dict[str, Any],
+        *,
+        segments_file: str,
+        segments_md5: str,
+        strategy: str,
+        exclude_interviewer: bool,
+    ) -> bool:
+        """Return True if an existing analysis work file matches current inputs."""
+
+        inp = existing.get("input")
+        if not isinstance(inp, dict):
+            return False
+
+        if str(inp.get("segments_file") or "") != segments_file:
+            return False
+
+        if str(inp.get("segments_md5") or "") != segments_md5:
+            return False
+
+        analysis_cfg = existing.get("analysis")
+        if not isinstance(analysis_cfg, dict):
+            return False
+
+        if str(analysis_cfg.get("strategy") or "") != strategy:
+            return False
+
+        if bool(analysis_cfg.get("exclude_interviewer")) != exclude_interviewer:
+            return False
+
+        return True
 
     def _build_codebook(self, config: InterviewConfig) -> dict[str, Any]:
         """

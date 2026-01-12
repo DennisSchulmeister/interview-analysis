@@ -31,6 +31,8 @@ import yaml
 from odfdo import Document
 
 from interview_analysis.config import ConfigError, InterviewConfig
+from interview_analysis.hash_utils import md5_file
+from interview_analysis.yaml_io import read_yaml_mapping
 
 
 @dataclass(frozen=True)
@@ -111,9 +113,10 @@ class SegmentAction:
             "documents": [],
         }
 
-        written = 0
+        updated = 0
+        skipped = 0
         for input_path in input_files:
-            doc_record = self._segment_one_file(
+            doc_record, did_update = self._segment_one_file(
                 config=config,
                 input_path=input_path,
                 out_dir=out_dir,
@@ -121,7 +124,10 @@ class SegmentAction:
                 overlap_paragraphs=overlap_paragraphs,
             )
             index["documents"].append(doc_record)
-            written += 1
+            if did_update:
+                updated += 1
+            else:
+                skipped += 1
 
         index_path = out_dir / "index.yaml"
         index_path.write_text(
@@ -129,7 +135,8 @@ class SegmentAction:
             encoding="utf-8",
         )
 
-        print(f"Segmented {written} transcript(s). Wrote index: {index_path}")
+        total = len(input_files)
+        print(f"Processed {total} transcript(s): updated {updated}, skipped {skipped}. Wrote index: {index_path}")
 
     def _discover_input_files(self, config: InterviewConfig) -> list[Path]:
         """
@@ -173,7 +180,7 @@ class SegmentAction:
         out_dir: Path,
         segment_paragraphs: int,
         overlap_paragraphs: int,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], bool]:
         """
         Segment one transcript file and write its YAML work file.
 
@@ -193,10 +200,37 @@ class SegmentAction:
             A document entry for the index file.
         """
 
-        source_paragraphs = self._extract_odt_paragraphs(input_path)
-        metadata, transcript_paragraphs = self._extract_document_metadata(source_paragraphs)
         doc_id = self._document_id(config.base_dir, input_path)
         rel_path = self._rel_posix(config.base_dir, input_path)
+        out_path = out_dir / f"{doc_id}.yaml"
+
+        transcript_md5 = md5_file(input_path)
+        if out_path.exists():
+            existing = read_yaml_mapping(out_path)
+            if self._segments_up_to_date(
+                existing,
+                rel_path=rel_path,
+                transcript_md5=transcript_md5,
+                segment_paragraphs=segment_paragraphs,
+                overlap_paragraphs=overlap_paragraphs,
+            ):
+                print(f"Skipping unchanged transcript: {rel_path}")
+                segments = existing.get("segments")
+                segments_total = len(segments) if isinstance(segments, list) else 0
+                paragraphs_total = int(existing.get("paragraphs_total") or 0)
+                return (
+                    {
+                        "document_id": doc_id,
+                        "source_path": rel_path,
+                        "segments_file": str(out_path),
+                        "paragraphs_total": paragraphs_total,
+                        "segments_total": segments_total,
+                    },
+                    False,
+                )
+
+        source_paragraphs = self._extract_odt_paragraphs(input_path)
+        metadata, transcript_paragraphs = self._extract_document_metadata(source_paragraphs)
 
         segments = self._build_segments(
             doc_id=doc_id,
@@ -205,13 +239,13 @@ class SegmentAction:
             overlap_paragraphs=overlap_paragraphs,
         )
 
-        out_path = out_dir / f"{doc_id}.yaml"
         payload: dict[str, Any] = {
             "schema_version": 1,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source": {
                 "path": rel_path,
                 "absolute_path": str(input_path.resolve()),
+                "md5": transcript_md5,
             },
             "document_id": doc_id,
             "metadata": metadata,
@@ -230,13 +264,49 @@ class SegmentAction:
             encoding="utf-8",
         )
 
-        return {
-            "document_id": doc_id,
-            "source_path": rel_path,
-            "segments_file": str(out_path),
-            "paragraphs_total": len(transcript_paragraphs),
-            "segments_total": len(segments),
-        }
+        return (
+            {
+                "document_id": doc_id,
+                "source_path": rel_path,
+                "segments_file": str(out_path),
+                "paragraphs_total": len(transcript_paragraphs),
+                "segments_total": len(segments),
+            },
+            True,
+        )
+
+    def _segments_up_to_date(
+        self,
+        existing: dict[str, Any],
+        *,
+        rel_path: str,
+        transcript_md5: str,
+        segment_paragraphs: int,
+        overlap_paragraphs: int,
+    ) -> bool:
+        """Return True if an existing segment work file matches current inputs."""
+
+        source = existing.get("source")
+        if not isinstance(source, dict):
+            return False
+
+        if str(source.get("path") or "") != rel_path:
+            return False
+
+        if str(source.get("md5") or "") != transcript_md5:
+            return False
+
+        seg_cfg = existing.get("segmentation")
+        if not isinstance(seg_cfg, dict):
+            return False
+
+        if int(seg_cfg.get("segment_paragraphs") or 0) != segment_paragraphs:
+            return False
+
+        if int(seg_cfg.get("overlap_paragraphs") or 0) != overlap_paragraphs:
+            return False
+
+        return True
 
     def _extract_odt_paragraphs(self, path: Path) -> list[dict[str, Any]]:
         """
