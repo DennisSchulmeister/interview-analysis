@@ -124,7 +124,7 @@ class AnalyzeAction:
             "schema_version": 1,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "config": {
-                "path": str(config.config_path),
+                "path": self._rel_posix(config.base_dir, config.config_path),
             },
             "analysis": {
                 "strategy": strategy,
@@ -144,7 +144,7 @@ class AnalyzeAction:
                 print(f"Skipping document entry without segments_file at index {doc_idx}")
                 continue
 
-            segments_path = Path(segments_file)
+            segments_path = self._resolve_from_base(config.base_dir, segments_file)
             if not segments_path.exists():
                 print(f"Skipping missing segments file: {segments_path}")
                 continue
@@ -153,11 +153,14 @@ class AnalyzeAction:
             derived_doc_id = segments_path.stem
             out_path = analysis_dir / f"{derived_doc_id}.yaml"
 
+            segments_file_rel = self._rel_posix(config.base_dir, segments_path)
+
             if out_path.exists():
                 existing = read_yaml_mapping(out_path)
                 if self._analysis_up_to_date(
                     existing,
-                    segments_file=str(segments_path),
+                    base_dir=config.base_dir,
+                    segments_file=segments_file_rel,
                     segments_md5=segments_md5,
                     codebook_hash=cb_hash,
                     strategy=strategy,
@@ -177,7 +180,7 @@ class AnalyzeAction:
                     analysis_index["documents"].append(
                         {
                             "document_id": doc_id,
-                            "analysis_file": str(out_path),
+                            "analysis_file": self._rel_posix(config.base_dir, out_path),
                             "segments_total": segments_total,
                         }
                     )
@@ -275,10 +278,10 @@ class AnalyzeAction:
                 "schema_version": 1,
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "config": {
-                    "path": str(config.config_path),
+                    "path": self._rel_posix(config.base_dir, config.config_path),
                 },
                 "input": {
-                    "segments_file": str(segments_path),
+                    "segments_file": segments_file_rel,
                     "segments_md5": segments_md5,
                     "codebook_hash": cb_hash,
                 },
@@ -301,7 +304,7 @@ class AnalyzeAction:
             analysis_index["documents"].append(
                 {
                     "document_id": doc_id,
-                    "analysis_file": str(out_path),
+                    "analysis_file": self._rel_posix(config.base_dir, out_path),
                     "segments_total": len(analyzed_segments),
                 }
             )
@@ -317,6 +320,7 @@ class AnalyzeAction:
         self,
         existing: dict[str, Any],
         *,
+        base_dir: Path,
         segments_file: str,
         segments_md5: str,
         codebook_hash: str,
@@ -329,8 +333,15 @@ class AnalyzeAction:
         if not isinstance(inp, dict):
             return False
 
-        if str(inp.get("segments_file") or "") != segments_file:
-            return False
+        existing_segments_file = str(inp.get("segments_file") or "")
+        if existing_segments_file != segments_file:
+            try:
+                if self._resolve_from_base(base_dir, existing_segments_file).resolve() != self._resolve_from_base(
+                    base_dir, segments_file
+                ).resolve():
+                    return False
+            except Exception:  # noqa: BLE001
+                return False
 
         if str(inp.get("segments_md5") or "") != segments_md5:
             return False
@@ -349,6 +360,28 @@ class AnalyzeAction:
             return False
 
         return True
+
+    def _resolve_from_base(self, base_dir: Path, path_value: str) -> Path:
+        """Resolve a potentially-relative path from the config base dir.
+
+        Work files store paths relative to the configuration file directory for
+        relocatability. For backwards compatibility, absolute paths are also
+        accepted.
+        """
+
+        p = Path(path_value)
+        if p.is_absolute():
+            return p
+        return (base_dir / p).resolve()
+
+    def _rel_posix(self, base_dir: Path, path: Path) -> str:
+        """Return a stable POSIX relative path (best-effort)."""
+
+        try:
+            rel = path.resolve().relative_to(base_dir.resolve())
+        except Exception:  # noqa: BLE001
+            rel = path.resolve()
+        return rel.as_posix()
 
     def _prepare_paragraphs_for_coding(
         self,
@@ -493,12 +526,17 @@ class AnalyzeAction:
             Parsed JSON response (or an error object with `_error`).
         """
 
-        return await ai_conversation_json(
+        result = await ai_conversation_json(
             [
                 {"role": "system", "content": system},
                 {"role": "user", "content": yaml.safe_dump(user_payload, sort_keys=False)},
             ]
         )
+
+        if isinstance(result, dict) and "_error" in result:
+            raise ConfigError(str(result.get("_error") or "LLM call failed"))
+
+        return result
 
     async def _code_segment_full_codebook(
         self,
@@ -574,10 +612,6 @@ class AnalyzeAction:
 
         mapping: dict[str, list[dict[str, Any]]] = {}
         errors: list[str] = []
-
-        if isinstance(result, dict) and "_error" in result:
-            errors.append(str(result.get("_error")))
-            return mapping, errors
 
         if not isinstance(result, dict):
             errors.append("LLM returned non-object JSON")
@@ -736,10 +770,6 @@ class AnalyzeAction:
             }
 
             result = await self._call_llm_json(system=system, user_payload=user_payload)
-
-            if isinstance(result, dict) and "_error" in result:
-                errors.append(f"{topic_name}: {result.get('_error')}")
-                continue
 
             if not isinstance(result, dict):
                 errors.append(f"{topic_name}: LLM returned non-object JSON")

@@ -18,6 +18,7 @@ The output contains:
 """
 
 import argparse
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -114,7 +115,12 @@ class WriteOutputAction:
         print(f"Building ODS report: {outfile}")
         doc = Document.new("spreadsheet")
 
-        summary_rows, per_doc_rows = self._collect_rows(documents)
+        # odfdo creates a default empty sheet (often named "Feuille1").
+        # Remove all existing tables so the output contains only our sheets.
+        for table in list(doc.body.tables):
+            doc.body.delete(table)
+
+        summary_rows, per_doc_rows = self._collect_rows(documents, base_dir=config.base_dir)
 
         self._append_summary_sheet(doc, summary_rows)
         self._append_transcript_sheets(doc, per_doc_rows)
@@ -126,6 +132,8 @@ class WriteOutputAction:
     def _collect_rows(
         self,
         documents: list[Any],
+        *,
+        base_dir: Path,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """
         Collect summary and per-document track records from analysis work files.
@@ -143,13 +151,17 @@ class WriteOutputAction:
         summary_counts: dict[tuple[str, str], dict[str, Any]] = {}
         per_doc: list[dict[str, Any]] = []
 
+        loaded: list[dict[str, Any]] = []
+        stem_counts: dict[str, int] = {}
+
+        # First pass: load analysis work files and detect duplicate stems.
         for doc_entry in documents:
             if not isinstance(doc_entry, dict):
                 continue
             analysis_file = doc_entry.get("analysis_file")
             if not isinstance(analysis_file, str) or not analysis_file.strip():
                 continue
-            path = Path(analysis_file)
+            path = self._resolve_from_base(base_dir, analysis_file)
             if not path.exists():
                 print(f"Skipping missing analysis file: {path}")
                 continue
@@ -164,11 +176,39 @@ class WriteOutputAction:
             source_path = None
             if isinstance(source, dict):
                 source_path = source.get("path")
-            sheet_name = self._sheet_name(doc_id=doc_id, source_path=source_path)
+            stem = None
+            if isinstance(source_path, str) and source_path.strip():
+                stem = Path(source_path).stem.strip()
+            if stem:
+                stem_counts[stem] = stem_counts.get(stem, 0) + 1
+
+            loaded.append(
+                {
+                    "doc_id": doc_id,
+                    "source_path": source_path,
+                    "analyzed": analyzed,
+                }
+            )
+
+        # Second pass: collect evidence rows using stable display ids.
+        for entry in loaded:
+            doc_id = str(entry.get("doc_id") or "")
+            source_path = entry.get("source_path")
+            analyzed = entry.get("analyzed")
+            if not isinstance(analyzed, dict):
+                continue
+
+            display_id = self._display_id(
+                doc_id=doc_id,
+                source_path=source_path,
+                base_dir=base_dir,
+                stem_counts=stem_counts,
+            )
+            sheet_name = self._sheet_name(display_id=display_id)
 
             segments = analyzed.get("segments")
             if not isinstance(segments, list):
-                print(f"Skipping analysis file without segments: {path}")
+                print(f"Skipping analysis file without segments: {doc_id}")
                 continue
 
             evidence_rows: list[dict[str, Any]] = []
@@ -228,7 +268,9 @@ class WriteOutputAction:
                         )
                         agg["count"] = int(agg.get("count", 0)) + 1
 
-                        where_found = f"{seg_id} / {para_id}" if seg_id else para_id
+                        # Each sheet contains exactly one transcript, so the
+                        # paragraph id is sufficient.
+                        where_found = self._pretty_paragraph_ref(para_id)
                         evidence_rows.append(
                             {
                                 "topic": topic_key,
@@ -260,6 +302,14 @@ class WriteOutputAction:
             key=lambda r: (str(r.get("topic") or ""), str(r.get("orientation") or "")),
         )
         return summary_rows, per_doc
+
+    def _resolve_from_base(self, base_dir: Path, path_value: str) -> Path:
+        """Resolve a potentially-relative path from the config base dir."""
+
+        p = Path(path_value)
+        if p.is_absolute():
+            return p
+        return (base_dir / p).resolve()
 
     def _append_summary_sheet(self, doc: Document, rows: list[dict[str, Any]]) -> None:
         """
@@ -339,27 +389,91 @@ class WriteOutputAction:
 
             doc.body.append(table)
 
-    def _sheet_name(self, *, doc_id: str, source_path: str | None) -> str:
-        """
-        Determine a human-readable sheet name.
+    def _sheet_name(self, *, display_id: str) -> str:
+        """Determine a human-readable sheet name for the ODS.
 
-        Args:
-            doc_id:
-                Document identifier.
-            source_path:
-                Relative source path, if available.
-
-        Returns:
-            Suggested sheet name (may be truncated).
+        We use the unique display id (stem or path-based) so sheet names match
+        the identifiers shown in the report.
         """
 
-        stem = None
-        if isinstance(source_path, str) and source_path.strip():
-            stem = Path(source_path).stem
-
-        base = stem.strip() if isinstance(stem, str) and stem.strip() else doc_id
+        base = str(display_id or "Transcript").strip() or "Transcript"
         base = base.replace("/", "_").replace("\\", "_")
         return base[:31]
+
+    def _display_id(
+        self,
+        *,
+        doc_id: str,
+        source_path: str | None,
+        base_dir: Path | None = None,
+        stem_counts: dict[str, int] | None = None,
+    ) -> str:
+        """Return a human-friendly document label for the report.
+
+        Internal `document_id` values contain a short hash suffix for stability
+        and uniqueness. For report output, we prefer the file stem when
+        available, otherwise we strip the `-<10hex>` suffix if present.
+        """
+
+        if isinstance(source_path, str) and source_path.strip():
+            src = Path(source_path)
+            stem = src.stem.strip()
+            if stem:
+                counts = stem_counts or {}
+                if counts.get(stem, 0) <= 1:
+                    return stem
+
+                # If the stem is not unique, include the relative directory to disambiguate.
+                # Example: "group1/Lecturer A" instead of "Lecturer A".
+                rel = src.with_suffix("")
+                try:
+                    if isinstance(base_dir, Path):
+                        rel = rel.relative_to(base_dir)
+                except Exception:
+                    # If relative_to fails (e.g., old absolute paths), keep the best effort.
+                    pass
+                return rel.as_posix()
+
+        return re.sub(r"-[0-9a-f]{10}$", "", doc_id)
+
+    def _pretty_where_found(self, where_found: str, *, doc_id: str, display_id: str) -> str:
+        """Rewrite internal IDs into prettier report identifiers."""
+
+        # 1) Prefer an exact match for this document's internal id.
+        prefix = f"{doc_id}:"
+        out = where_found
+        if prefix:
+            out = out.replace(prefix, f"{display_id}:")
+
+        # 2) Also strip any "-<10hex>" suffix used in internal document ids.
+        # This fixes cases where the analysis file's `document_id` or the
+        # evidence ids are not perfectly aligned.
+        def _repl(m: re.Match[str]) -> str:
+            return f"{display_id}:{m.group(2)}"
+
+        out = re.sub(
+            r"\b([A-Za-z0-9_-]+)-[0-9a-f]{10}:(p\d{4}(?:-p\d{4})?)\b",
+            _repl,
+            out,
+        )
+        return out
+
+    def _pretty_paragraph_ref(self, para_id: str) -> str:
+        """Return a compact paragraph reference for per-transcript sheets.
+
+        The paragraph id is normally `${document_id}:p0003`. Within a
+        transcript sheet, `p0003` is sufficient.
+        """
+
+        if not isinstance(para_id, str):
+            return ""
+
+        m = re.search(r"\b(p\d{4})\b", para_id)
+        if m:
+            return m.group(1)
+
+        # Fallback: strip everything up to the last colon.
+        return para_id.rsplit(":", 1)[-1]
 
     def _unique_sheet_name(self, name: str, used: set[str]) -> str:
         """

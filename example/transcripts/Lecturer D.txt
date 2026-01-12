@@ -1,33 +1,33 @@
 Interviewer = S00
 
-S00 - Could you briefly describe your teaching background before using the new teaching method?
+S00: Could you briefly describe your teaching background before using the new teaching method?
 
-S01 - I have been teaching for around eight years, mostly in large introductory courses, and I had not experimented much with alternative teaching methods before this.
+S01: I have been teaching for around eight years, mostly in large introductory courses, and I had not experimented much with alternative teaching methods before this.
 
-S00 - What motivated you to try this particular teaching method?
+S00: What motivated you to try this particular teaching method?
 
-S01 - I joined the project because my department encouraged participation, but I was also hoping it might help students engage more actively during lectures.
+S01: I joined the project because my department encouraged participation, but I was also hoping it might help students engage more actively during lectures.
 
-S00 - How did you integrate the method into your course?
+S00: How did you integrate the method into your course?
 
-S01 - I applied the method throughout the semester, although I adapted it differently depending on the topic and the size of the group.
+S01: I applied the method throughout the semester, although I adapted it differently depending on the topic and the size of the group.
 
-S00 - How did this affect your own teaching?
+S00: How did this affect your own teaching?
 
-S01 - Teaching became more interactive, but it also felt more demanding and required me to rethink how I plan each session.
+S01: Teaching became more interactive, but it also felt more demanding and required me to rethink how I plan each session.
 
-S00 - Did you observe any effects on student learning?
+S00: Did you observe any effects on student learning?
 
-S01 - Students participated more and asked more questions, but I am not sure whether this led to better exam results.
+S01: Students participated more and asked more questions, but I am not sure whether this led to better exam results.
 
-S00 - How did students participate during these sessions?
+S00: How did students participate during these sessions?
 
-S01 - Some students became much more involved over time, while others remained passive despite the new format.
+S01: Some students became much more involved over time, while others remained passive despite the new format.
 
-S00 - How manageable was the method in terms of workload and resources?
+S00: How manageable was the method in terms of workload and resources?
 
-S01 - The method fit reasonably well once established, but the initial preparation phase required significant additional effort.
+S01: The method fit reasonably well once established, but the initial preparation phase required significant additional effort.
 
-S00 - Do you plan to continue using this teaching method in the future?
+S00: Do you plan to continue using this teaching method in the future?
 
-S01 - I would consider continuing to use it if the workload can be reduced and if there is clearer evidence of learning benefits.
+S01: I would consider continuing to use it if the workload can be reduced and if there is clearer evidence of learning benefits.

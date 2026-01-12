@@ -36,6 +36,25 @@ class ParserError(RuntimeError):
     """Raised for transcript parsing errors."""
 
     message: str
+    path: Path | None = None
+    line: int | None = None
+    excerpt: str | None = None
 
     def __str__(self) -> str:  # pragma: no cover
-        return self.message
+        parts: list[str] = []
+
+        if self.path is not None:
+            if self.line is not None:
+                parts.append(f"{self.path}:{self.line}: {self.message}")
+            else:
+                parts.append(f"{self.path}: {self.message}")
+        else:
+            parts.append(self.message)
+
+        if isinstance(self.excerpt, str) and self.excerpt.strip():
+            excerpt = self.excerpt.strip().replace("\n", " ")
+            if len(excerpt) > 160:
+                excerpt = excerpt[:157] + "..."
+            parts.append(f"> {excerpt}")
+
+        return "\n".join(parts)

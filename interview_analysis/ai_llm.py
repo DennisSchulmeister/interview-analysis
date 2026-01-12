@@ -101,6 +101,35 @@ def _parse_json_content(content: str) -> JsonValue:
     return cast(JsonValue, json.loads(content))
 
 
+def _ensure_json_instruction(messages: list[ChatCompletionMessageParam]) -> list[ChatCompletionMessageParam]:
+    """Ensure at least one message contains the word 'json'.
+
+    Some OpenAI-compatible endpoints require that the prompt contains the word
+    'json' when using response_format of type json_object/json_schema.
+    """
+
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, str) and "json" in content.lower():
+            return messages
+
+    # Prefer appending to an existing system message to avoid changing turn order.
+    if messages:
+        first = messages[0]
+        if first.get("role") == "system" and isinstance(first.get("content"), str):
+            patched = list(messages)
+            patched[0] = {
+                **first,
+                "content": (first.get("content") or "") + " Respond with valid JSON.",
+            }
+            return patched
+
+    return [
+        {"role": "system", "content": "Respond with valid JSON."},
+        *messages,
+    ]
+
+
 async def ai_conversation(
     messages: list[ChatCompletionMessageParam],
     *,
@@ -191,7 +220,7 @@ async def ai_conversation_json(
         response_format = {"type": "json_schema", "json_schema": json_schema}
 
     result = await ai_conversation(
-        messages,
+        _ensure_json_instruction(messages),
         response_format=response_format,
         parse_json=True,
     )

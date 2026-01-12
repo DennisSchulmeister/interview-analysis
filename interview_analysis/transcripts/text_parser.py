@@ -33,6 +33,13 @@ class TextTranscriptParser:
         r"^\s*(?:>\s*)*(?:[-+*]\s+|\d+[\.)]\s+)?(?P<label>[^:\n]{1,80}):\s*\S"
     )
 
+    # Allow the metadata marker to be formatted like normal statements in Markdown
+    # (e.g., block quotes or list items) and ignore case.
+    _INTERVIEWER_META_RE = re.compile(
+        r"^\s*(?:>\s*)*(?:[-+*]\s+|\d+[\.)]\s+)?interviewer\s*=\s*(?P<value>.*?)\s*$",
+        re.IGNORECASE,
+    )
+
     def can_read(self, path: Path) -> bool:
         return path.suffix.lower() in {".txt", ".md"}
 
@@ -40,17 +47,47 @@ class TextTranscriptParser:
         try:
             raw = path.read_text(encoding="utf-8")
         except Exception as exc:  # noqa: BLE001
-            raise ParserError(f"Failed to read text file '{path}': {exc}") from exc
+            raise ParserError(f"Failed to read text file: {exc}", path=path) from exc
 
         text = raw.replace("\r\n", "\n").replace("\r", "\n")
-        blocks = [b.strip() for b in re.split(r"\n\s*\n+", text) if b.strip()]
+
+        blocks: list[tuple[int, str]] = []
+        current: list[str] = []
+        start_line: int | None = None
+
+        for idx, line in enumerate(text.split("\n"), start=1):
+            if not line.strip():
+                if current:
+                    blocks.append((start_line or idx, "\n".join(current).strip()))
+                    current = []
+                    start_line = None
+                continue
+
+            if start_line is None:
+                start_line = idx
+            current.append(line)
+
+        if current:
+            blocks.append((start_line or 1, "\n".join(current).strip()))
 
         paragraphs: list[dict[str, Any]] = []
         statement_index = 0
 
-        for block in blocks:
+        for block_start_line, block in blocks:
             cleaned = " ".join(block.split())
             if not cleaned:
+                continue
+
+            meta = self._INTERVIEWER_META_RE.match(cleaned)
+            if meta:
+                # Keep metadata as a paragraph record so the segment action can
+                # extract it, but ensure it does not affect paragraph numbering.
+                paragraphs.append(
+                    {
+                        "source_index": 0,
+                        "text": f"interviewer = {(meta.group('value') or '').strip()}",
+                    }
+                )
                 continue
 
             if self._LABEL_RE.match(cleaned):
@@ -59,9 +96,10 @@ class TextTranscriptParser:
                 continue
 
             if not paragraphs:
-                raise ParserError(
-                    "First statement does not start with a label like 'Name: ...'"
-                )
+                first_line = block.splitlines()[0].strip() if block.splitlines() else cleaned
+                # Instead of failing hard, skip unparseable leading blocks and
+                # try to continue with later blocks.
+                continue
 
             # Continuation: append to previous statement.
             prev = paragraphs[-1]

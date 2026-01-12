@@ -8,6 +8,14 @@ exclude: "private/**"
 workdir: ./work
 outfile: results.ods
 
+segmentation:
+  segment_paragraphs: 12
+  overlap_paragraphs: 3
+
+analysis:
+  exclude_interviewer: true
+  strategy: segment
+
 topics:
   - topic: Prior teaching experience
     description: Explicit references to lecturers’ background, seniority, or prior pedagogical practices.

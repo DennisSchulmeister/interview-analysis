@@ -101,7 +101,7 @@ class SegmentAction:
             "schema_version": 1,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "config": {
-                "path": str(config.config_path),
+                "path": self._rel_posix(config.base_dir, config.config_path),
             },
             "segmentation": {
                 "unit": "paragraph",
@@ -114,6 +114,7 @@ class SegmentAction:
 
         updated = 0
         skipped = 0
+        failed = 0
         for input_path in input_files:
             doc_record, did_update = self._segment_one_file(
                 config=config,
@@ -123,7 +124,9 @@ class SegmentAction:
                 overlap_paragraphs=overlap_paragraphs,
             )
             index["documents"].append(doc_record)
-            if did_update:
+            if doc_record.get("status") == "failed":
+                failed += 1
+            elif did_update:
                 updated += 1
             else:
                 skipped += 1
@@ -135,7 +138,10 @@ class SegmentAction:
         )
 
         total = len(input_files)
-        print(f"Processed {total} transcript(s): updated {updated}, skipped {skipped}. Wrote index: {index_path}")
+        print(
+            f"Processed {total} transcript(s): updated {updated}, skipped {skipped}, failed {failed}. "
+            f"Wrote index: {index_path}"
+        )
 
     def _discover_input_files(self, config: InterviewConfig) -> list[Path]:
         """
@@ -227,14 +233,29 @@ class SegmentAction:
                     {
                         "document_id": doc_id,
                         "source_path": rel_path,
-                        "segments_file": str(out_path),
+                        "segments_file": self._rel_posix(config.base_dir, out_path),
                         "paragraphs_total": paragraphs_total,
                         "segments_total": segments_total,
                     },
                     False,
                 )
 
-        source_paragraphs = read_transcript_paragraphs(input_path)
+        print(f"Segmenting: {rel_path} ", end="", flush=True)
+
+        try:
+            source_paragraphs = read_transcript_paragraphs(input_path)
+        except ConfigError as exc:
+            print()  # finish progress line
+            print(f"WARNING: Skipping transcript due to parse error: {rel_path}\n{exc}")
+            return (
+                {
+                    "document_id": doc_id,
+                    "source_path": rel_path,
+                    "status": "failed",
+                    "error": str(exc),
+                },
+                False,
+            )
         metadata, transcript_paragraphs = self._extract_document_metadata(source_paragraphs)
 
         segments = self._build_segments(
@@ -244,12 +265,13 @@ class SegmentAction:
             overlap_paragraphs=overlap_paragraphs,
         )
 
+        print("." * len(segments) + f" ({len(segments)} segment(s))")
+
         payload: dict[str, Any] = {
             "schema_version": 1,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source": {
                 "path": rel_path,
-                "absolute_path": str(input_path.resolve()),
                 "md5": transcript_md5,
             },
             "document_id": doc_id,
@@ -273,7 +295,7 @@ class SegmentAction:
             {
                 "document_id": doc_id,
                 "source_path": rel_path,
-                "segments_file": str(out_path),
+                "segments_file": self._rel_posix(config.base_dir, out_path),
                 "paragraphs_total": len(transcript_paragraphs),
                 "segments_total": len(segments),
             },
