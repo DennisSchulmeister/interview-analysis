@@ -17,6 +17,8 @@ analysis:
   strategy: segment
   rules:
     - "Statements about how a method will be used in the future are coded under Future intentions, not Implementation approach."
+  allow_secondary_assignments: true
+  allow_multiple_primary_assignments: true
 
 topics:
   - topic: Prior teaching experience

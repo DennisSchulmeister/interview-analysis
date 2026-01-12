@@ -272,6 +272,16 @@ Optional sections:
 	- additional global coding rules (short, explicit instructions) that are appended to the LLM prompt
 	- use this to prevent systematic confusions that are not easily expressed as topic/orientation definitions
 
+* `analysis.allow_secondary_assignments` (bool, default: false)
+	- if `true`, the model may assign multiple topics to the same statement by marking one as `primary` and others as `secondary`
+	- secondary assignments must include a short keyword note explaining why they are secondary
+	- the `Summary` sheet counts primary assignments; secondary assignments are visible in the per-transcript sheets
+
+* `analysis.allow_multiple_primary_assignments` (bool, default: true)
+	- only relevant when `analysis.allow_secondary_assignments` is `true`
+	- if `true`, the model may mark multiple topic matches as `primary` for the same statement (useful for very long statements)
+	- if `false`, exactly one primary is kept per statement; additional primaries are downgraded to `secondary` with a keyword reason
+
 ### topics (codebook)
 
 Each entry in `topics` can be written in one of these formats:
@@ -349,6 +359,8 @@ The output is an OpenDocument Spreadsheet (`.ods`) with:
 * One sheet per transcript: a chronological evidence track record with columns:
 	- Topic
 	- Orientation
+	- Role (primary/secondary)
+	- Secondary reason (keyword; only for secondary)
 	- Where Found (paragraph identifier; transcript is implied by the sheet)
 	- Evidence Quote
 

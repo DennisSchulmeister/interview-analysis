@@ -251,6 +251,8 @@ class WriteOutputAction:
                         topic = a.get("topic")
                         orientation = a.get("orientation")
                         evidence = a.get("evidence")
+                        kind = a.get("kind")
+                        secondary_reason = a.get("secondary_reason")
                         if not isinstance(topic, str) or not isinstance(evidence, str):
                             continue
 
@@ -264,25 +266,33 @@ class WriteOutputAction:
                         if not topic_key:
                             continue
 
+                        kind_norm = "primary"
+                        if isinstance(kind, str) and kind.strip().lower() in {"secondary", "minor", "s"}:
+                            kind_norm = "secondary"
+                        secondary_reason_norm = ""
+                        if kind_norm == "secondary" and isinstance(secondary_reason, str):
+                            secondary_reason_norm = " ".join(secondary_reason.split()).strip()
+
                         orientation_bucket = orientation_key if orientation_key else "(none)"
 
-                        key = (topic_key, orientation_bucket)
-                        agg = summary_counts.setdefault(
-                            key,
-                            {
-                                "topic": topic_key,
-                                "orientation": orientation_bucket,
-                                "count": 0,
-                                "example_quote": evidence,
-                            },
-                        )
-                        agg["count"] = int(agg.get("count", 0)) + 1
+                        if kind_norm != "secondary":
+                            key = (topic_key, orientation_bucket)
+                            agg = summary_counts.setdefault(
+                                key,
+                                {
+                                    "topic": topic_key,
+                                    "orientation": orientation_bucket,
+                                    "count": 0,
+                                    "example_quote": evidence,
+                                },
+                            )
+                            agg["count"] = int(agg.get("count", 0)) + 1
 
-                        # If the summary row was pre-seeded (zero-count), it
-                        # starts with an empty example quote. Use the first
-                        # observed evidence as the example.
-                        if not str(agg.get("example_quote") or "").strip() and evidence.strip():
-                            agg["example_quote"] = evidence
+                            # If the summary row was pre-seeded (zero-count), it
+                            # starts with an empty example quote. Use the first
+                            # observed evidence as the example.
+                            if not str(agg.get("example_quote") or "").strip() and evidence.strip():
+                                agg["example_quote"] = evidence
 
                         # Each sheet contains exactly one transcript, so the
                         # paragraph id is sufficient.
@@ -291,6 +301,8 @@ class WriteOutputAction:
                             {
                                 "topic": topic_key,
                                 "orientation": orientation_bucket,
+                                "role": kind_norm,
+                                "secondary_reason": secondary_reason_norm,
                                 "where_found": where_found,
                                 "evidence": evidence,
                                 "paragraph_index": para_index,
@@ -507,6 +519,8 @@ class WriteOutputAction:
             header = Row()
             header.append_cell(Cell(text="Topic"))
             header.append_cell(Cell(text="Orientation"))
+            header.append_cell(Cell(text="Role"))
+            header.append_cell(Cell(text="Secondary reason"))
             header.append_cell(Cell(text="Where Found"))
             header.append_cell(Cell(text="Evidence Quote"))
             table.append_row(header)
@@ -519,6 +533,8 @@ class WriteOutputAction:
                     row = Row()
                     row.append_cell(Cell(text=str(r.get("topic", ""))))
                     row.append_cell(Cell(text=str(r.get("orientation", ""))))
+                    row.append_cell(Cell(text=str(r.get("role", ""))))
+                    row.append_cell(Cell(text=str(r.get("secondary_reason", ""))))
                     row.append_cell(Cell(text=str(r.get("where_found", ""))))
                     row.append_cell(Cell(text=str(r.get("evidence", ""))))
                     table.append_row(row)

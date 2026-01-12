@@ -95,11 +95,28 @@ class AnalysisConfig:
             Optional list of general coding rules (short, explicit instructions)
             applied across all topics. These are provided to the LLM in addition
             to the codebook to reduce systematic misclassifications.
+        allow_secondary_assignments:
+            If True, allow assigning multiple topics to a statement by marking
+            exactly one as the primary topic and the others as secondary topics.
+            Secondary topics must include a short keyword note for why they are
+            secondary. If False (default), at most one topic should be assigned
+            per statement.
+        allow_multiple_primary_assignments:
+            If True (default), allow multiple topic assignments to be marked as
+            primary for the same statement.
+
+            This is useful for very long statements where multiple topics are
+            equally central.
+
+            This setting only has an effect when `allow_secondary_assignments`
+            is True.
     """
 
     exclude_interviewer: bool = False
     strategy: str = "segment"
     rules: list[str] = field(default_factory=list)
+    allow_secondary_assignments: bool = False
+    allow_multiple_primary_assignments: bool = True
 
 
 @dataclass(frozen=True)
@@ -504,11 +521,23 @@ def _parse_analysis(value: Any) -> AnalysisConfig:
     exclude_interviewer = value.get("exclude_interviewer", AnalysisConfig.exclude_interviewer)
     strategy = value.get("strategy", AnalysisConfig.strategy)
     rules_raw = value.get("rules", None)
+    allow_secondary = value.get(
+        "allow_secondary_assignments",
+        AnalysisConfig.allow_secondary_assignments,
+    )
+    allow_multiple_primary = value.get(
+        "allow_multiple_primary_assignments",
+        AnalysisConfig.allow_multiple_primary_assignments,
+    )
 
     if not isinstance(exclude_interviewer, bool):
         raise ConfigError("analysis.exclude_interviewer must be a boolean")
     if not isinstance(strategy, str) or not strategy.strip():
         raise ConfigError("analysis.strategy must be a non-empty string")
+    if not isinstance(allow_secondary, bool):
+        raise ConfigError("analysis.allow_secondary_assignments must be a boolean")
+    if not isinstance(allow_multiple_primary, bool):
+        raise ConfigError("analysis.allow_multiple_primary_assignments must be a boolean")
 
     strategy_norm = strategy.strip().lower()
     if strategy_norm not in {"segment", "topic"}:
@@ -534,4 +563,6 @@ def _parse_analysis(value: Any) -> AnalysisConfig:
         exclude_interviewer=exclude_interviewer,
         strategy=strategy_norm,
         rules=rules,
+        allow_secondary_assignments=allow_secondary,
+        allow_multiple_primary_assignments=allow_multiple_primary,
     )

@@ -118,6 +118,10 @@ class AnalyzeAction:
         cb_hash = codebook_hash(codebook)
         rules = list(getattr(config.analysis, "rules", []) or [])
         rules_hash = md5_text("\n".join(rules)) if rules else ""
+        allow_secondary = bool(getattr(config.analysis, "allow_secondary_assignments", False))
+        allow_multiple_primary = bool(
+            getattr(config.analysis, "allow_multiple_primary_assignments", True)
+        )
         allowed_orientations = orientations_by_topic(codebook)
         orientation_policy = self._build_orientation_policy(config.topics)
         strategy = config.analysis.strategy
@@ -133,6 +137,8 @@ class AnalyzeAction:
                 "strategy": strategy,
                 "exclude_interviewer": exclude_interviewer,
                 "rules": rules,
+                "allow_secondary_assignments": allow_secondary,
+                "allow_multiple_primary_assignments": allow_multiple_primary,
             },
             "documents": [],
         }
@@ -170,6 +176,8 @@ class AnalyzeAction:
                     rules_hash=rules_hash,
                     strategy=strategy,
                     exclude_interviewer=exclude_interviewer,
+                    allow_secondary_assignments=allow_secondary,
+                    allow_multiple_primary_assignments=allow_multiple_primary,
                 ):
                     existing_doc_id = existing.get("document_id")
                     doc_id = (
@@ -256,28 +264,37 @@ class AnalyzeAction:
                     continue
 
                 if strategy == "segment":
-                    mapping, errors = await self._code_segment_full_codebook(
+                    mapping, errors, segment_warnings = await self._code_segment_full_codebook(
                         segment_id=seg_id,
                         paragraphs=paragraph_records,
                         codebook=codebook,
                         allowed_orientations=allowed_orientations,
                         coding_rules=rules,
+                        allow_secondary_assignments=allow_secondary,
+                        allow_multiple_primary_assignments=allow_multiple_primary,
                         exclude_interviewer=exclude_interviewer,
                         interviewer_labels=interviewers,
                     )
                 else:
-                    mapping, errors = await self._code_segment_per_topic(
+                    mapping, errors, segment_warnings = await self._code_segment_per_topic(
                         segment_id=seg_id,
                         paragraphs=paragraph_records,
                         codebook=codebook,
                         allowed_orientations=allowed_orientations,
                         coding_rules=rules,
+                        allow_secondary_assignments=allow_secondary,
+                        allow_multiple_primary_assignments=allow_multiple_primary,
                         exclude_interviewer=exclude_interviewer,
                         interviewer_labels=interviewers,
                     )
 
                 if errors:
                     result["errors"].extend(errors)
+
+                if segment_warnings:
+                    warnings = result.get("warnings")
+                    if isinstance(warnings, list):
+                        warnings.extend(segment_warnings)
 
                 mapping, policy_warnings = self._enforce_orientation_policy(
                     mapping,
@@ -310,6 +327,8 @@ class AnalyzeAction:
                     "strategy": strategy,
                     "exclude_interviewer": exclude_interviewer,
                     "rules": rules,
+                    "allow_secondary_assignments": allow_secondary,
+                    "allow_multiple_primary_assignments": allow_multiple_primary,
                 },
                 "codebook": codebook,
                 "segments": analyzed_segments,
@@ -346,6 +365,8 @@ class AnalyzeAction:
         rules_hash: str,
         strategy: str,
         exclude_interviewer: bool,
+        allow_secondary_assignments: bool,
+        allow_multiple_primary_assignments: bool,
     ) -> bool:
         """Return True if an existing analysis work file matches current inputs."""
 
@@ -382,7 +403,27 @@ class AnalyzeAction:
         if bool(analysis_cfg.get("exclude_interviewer")) != exclude_interviewer:
             return False
 
+        if bool(analysis_cfg.get("allow_secondary_assignments")) != allow_secondary_assignments:
+            return False
+
+        if (
+            bool(analysis_cfg.get("allow_multiple_primary_assignments", True))
+            != allow_multiple_primary_assignments
+        ):
+            return False
+
         return True
+
+    def _normalize_secondary_kind(self, value: Any) -> str:
+        if isinstance(value, str):
+            v = value.strip().lower()
+            if v in {"primary", "p"}:
+                return "primary"
+            if v in {"secondary", "s", "minor"}:
+                return "secondary"
+        if isinstance(value, bool):
+            return "secondary" if value else "primary"
+        return "primary"
 
     def _format_coding_rules(self, rules: list[str]) -> str:
         cleaned = [" ".join(r.split()).strip() for r in rules if isinstance(r, str) and r.strip()]
@@ -579,9 +620,11 @@ class AnalyzeAction:
         codebook: dict[str, Any],
         allowed_orientations: dict[str, list[str]],
         coding_rules: list[str],
+        allow_secondary_assignments: bool,
+        allow_multiple_primary_assignments: bool,
         exclude_interviewer: bool,
         interviewer_labels: list[str],
-    ) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
+    ) -> tuple[dict[str, list[dict[str, Any]]], list[str], list[str]]:
         """
         Code a segment with a single LLM call using the full codebook.
 
@@ -614,7 +657,13 @@ class AnalyzeAction:
         user_payload = {
             "segment_id": segment_id,
             "task": (
-                "For each paragraph where target=true, assign zero or more topics from the codebook. "
+                "For each paragraph where target=true, assign topics from the codebook. "
+                "If allow_secondary_assignments=false, assign at most one topic per paragraph (or none). "
+                "If allow_secondary_assignments=true, you may assign multiple topics per paragraph. "
+                "When allow_multiple_primary_assignments=false, assign exactly one primary topic per paragraph when any topic applies, "
+                "and mark any additional topics as secondary. "
+                "When allow_multiple_primary_assignments=true, you may mark multiple topics as primary if they are equally central (e.g., very long statements). "
+                "Secondary topics must include a short keyword note explaining why they are secondary. "
                 "For each assignment, if the topic defines orientations, choose exactly one allowed orientation. "
                 "If the topic has no orientations, set orientation to null (or an empty string). "
                 "Do not assign the same topic more than once per paragraph unless the codebook sets allow_multiple_orientations=true for that topic. "
@@ -622,6 +671,8 @@ class AnalyzeAction:
                 "Use codebook topic/orientation descriptions (if present) as selection hints, but do not infer beyond the paragraph text. "
                 "Always provide an evidence quote that appears verbatim in the paragraph."
             ),
+            "allow_secondary_assignments": allow_secondary_assignments,
+            "allow_multiple_primary_assignments": allow_multiple_primary_assignments,
             "interviewer_labels": interviewer_labels if exclude_interviewer else [],
             "codebook": codebook,
             "paragraphs": [
@@ -642,6 +693,8 @@ class AnalyzeAction:
                                 "topic": "<topic name>",
                                 "orientation": "<one allowed orientation, or null if none>",
                                 "evidence": "<exact quote from the paragraph>",
+                                "kind": "<primary|secondary>",
+                                "secondary_reason": "<keyword if kind=secondary, else empty>",
                             }
                         ],
                     }
@@ -653,15 +706,16 @@ class AnalyzeAction:
 
         mapping: dict[str, list[dict[str, Any]]] = {}
         errors: list[str] = []
+        warnings: list[str] = []
 
         if not isinstance(result, dict):
             errors.append("LLM returned non-object JSON")
-            return mapping, errors
+            return mapping, errors, warnings
 
         para_items = result.get("paragraphs")
         if not isinstance(para_items, list):
             errors.append("LLM response missing 'paragraphs' list")
-            return mapping, errors
+            return mapping, errors, warnings
 
         for item in para_items:
             if not isinstance(item, dict):
@@ -677,6 +731,8 @@ class AnalyzeAction:
                 topic = a.get("topic")
                 orientation = a.get("orientation")
                 evidence = a.get("evidence")
+                kind = a.get("kind")
+                secondary_reason = a.get("secondary_reason")
                 if not isinstance(topic, str) or not isinstance(evidence, str):
                     continue
                 if not topic.strip() or not evidence.strip():
@@ -703,17 +759,63 @@ class AnalyzeAction:
                     # Topic without orientations: normalize to empty string.
                     orientation_norm = ""
 
+                kind_norm = self._normalize_secondary_kind(kind)
+                secondary_reason_norm = ""
+                if not allow_secondary_assignments:
+                    kind_norm = "primary"
+                elif kind_norm == "secondary":
+                    if isinstance(secondary_reason, str):
+                        secondary_reason_norm = " ".join(secondary_reason.split()).strip()
+                    if not secondary_reason_norm:
+                        # Require a keyword note for secondary assignments.
+                        continue
+                else:
+                    kind_norm = "primary"
+
                 normalized.append(
                     {
                         "topic": topic_key,
                         "orientation": orientation_norm,
                         "evidence": evidence,
+                        "kind": kind_norm,
+                        "secondary_reason": secondary_reason_norm,
                     }
                 )
-            if normalized:
-                mapping[pid] = normalized
 
-        return mapping, errors
+            if not normalized:
+                continue
+
+            if not allow_secondary_assignments:
+                if len(normalized) > 1:
+                    warnings.append(
+                        f"Multiple topics returned for paragraph {pid} but secondary assignments are disabled; keeping the first and dropping {len(normalized) - 1}."
+                    )
+                mapping[pid] = [normalized[0]]
+                continue
+
+            primaries = [x for x in normalized if x.get("kind") == "primary"]
+            secondaries = [x for x in normalized if x.get("kind") == "secondary"]
+
+            if primaries:
+                if allow_multiple_primary_assignments:
+                    mapping[pid] = primaries + secondaries
+                else:
+                    # Keep only one primary; downgrade extra primaries.
+                    kept = primaries[0]
+                    downgraded = primaries[1:]
+                    for x in downgraded:
+                        x["kind"] = "secondary"
+                        if not str(x.get("secondary_reason") or "").strip():
+                            x["secondary_reason"] = "secondary_due_to_primary_conflict"
+                    mapping[pid] = [kept] + secondaries + downgraded
+            else:
+                # If model returned only secondary topics, treat the first as primary.
+                kept = secondaries[0]
+                kept["kind"] = "primary"
+                kept["secondary_reason"] = ""
+                mapping[pid] = [kept] + secondaries[1:]
+
+        return mapping, errors, warnings
 
     async def _code_segment_per_topic(
         self,
@@ -723,30 +825,20 @@ class AnalyzeAction:
         codebook: dict[str, Any],
         allowed_orientations: dict[str, list[str]],
         coding_rules: list[str],
+        allow_secondary_assignments: bool,
+        allow_multiple_primary_assignments: bool,
         exclude_interviewer: bool,
         interviewer_labels: list[str],
-    ) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
-        """
-        Code a segment by calling the LLM once per topic.
-
-        Args:
-            segment_id:
-                Segment identifier.
-            paragraphs:
-                Paragraph records.
-            codebook:
-                Codebook mapping.
-
-        Returns:
-            Tuple of (paragraph_id -> assignments list, errors list).
-        """
+    ) -> tuple[dict[str, list[dict[str, Any]]], list[str], list[str]]:
+        """Code a segment by calling the LLM once per topic."""
 
         topics = codebook.get("topics")
         if not isinstance(topics, list):
-            return {}, ["Invalid codebook: missing topics"]
+            return {}, ["Invalid codebook: missing topics"], []
 
         combined: dict[str, list[dict[str, Any]]] = {}
         errors: list[str] = []
+        warnings: list[str] = []
 
         extra: list[str] = [
             "If the topic provides a description or orientation descriptions, use them as hints for when to choose a match.",
@@ -780,6 +872,11 @@ class AnalyzeAction:
                 "segment_id": segment_id,
                 "task": (
                     "For each paragraph where target=true, decide whether it explicitly addresses the given topic. "
+                    "If allow_secondary_assignments=false, be conservative and do not assign this topic if another topic would be more central. "
+                    "If allow_secondary_assignments=true, classify a match as primary if it is central to the statement, or secondary if it is only a minor mention. "
+                    "When allow_multiple_primary_assignments=false, only one topic per paragraph should be primary overall; mark other topic matches as secondary. "
+                    "When allow_multiple_primary_assignments=true, multiple topic matches may be marked as primary if they are equally central (e.g., very long statements). "
+                    "Secondary matches must include a short keyword note explaining why they are secondary. "
                     "If yes and an orientations list is provided, select exactly one orientation from the allowed list. "
                     "If no orientations are provided, omit orientation (or set it to null). "
                     "Do not assign the same topic more than once per paragraph unless allow_multiple_orientations=true for that topic. "
@@ -788,6 +885,8 @@ class AnalyzeAction:
                     "Always provide an evidence quote "
                     "that appears verbatim in the paragraph."
                 ),
+                "allow_secondary_assignments": allow_secondary_assignments,
+                "allow_multiple_primary_assignments": allow_multiple_primary_assignments,
                 "interviewer_labels": interviewer_labels if exclude_interviewer else [],
                 "topic": {
                     "topic": topic_name,
@@ -818,6 +917,8 @@ class AnalyzeAction:
                             "paragraph_id": "<paragraph id>",
                             "orientation": "<one of the allowed orientations, or null if none>",
                             "evidence": "<exact quote from the paragraph>",
+                            "kind": "<primary|secondary>",
+                            "secondary_reason": "<keyword if kind=secondary, else empty>",
                         }
                     ]
                 },
@@ -840,6 +941,8 @@ class AnalyzeAction:
                 pid = m.get("paragraph_id")
                 orientation = m.get("orientation")
                 evidence = m.get("evidence")
+                kind = m.get("kind")
+                secondary_reason = m.get("secondary_reason")
                 if not isinstance(pid, str) or not isinstance(evidence, str):
                     continue
                 if not pid.strip() or not evidence.strip():
@@ -860,15 +963,65 @@ class AnalyzeAction:
                 else:
                     orientation_norm = ""
 
+                kind_norm = "primary"
+                secondary_reason_norm = ""
+                if allow_secondary_assignments:
+                    kind_norm = self._normalize_secondary_kind(kind)
+                    if kind_norm == "secondary":
+                        if isinstance(secondary_reason, str):
+                            secondary_reason_norm = " ".join(secondary_reason.split()).strip()
+                        if not secondary_reason_norm:
+                            continue
+                else:
+                    kind_norm = "primary"
+
                 combined.setdefault(pid, []).append(
                     {
                         "topic": topic_name,
                         "orientation": orientation_norm,
                         "evidence": evidence,
+                        "kind": kind_norm,
+                        "secondary_reason": secondary_reason_norm,
                     }
                 )
 
-        return combined, errors
+        if not allow_secondary_assignments:
+            for pid, assigns in list(combined.items()):
+                if not isinstance(assigns, list) or not assigns:
+                    combined.pop(pid, None)
+                    continue
+                if len(assigns) > 1:
+                    warnings.append(
+                        f"Multiple topics returned for paragraph {pid} but secondary assignments are disabled; keeping the first and dropping {len(assigns) - 1}."
+                    )
+                combined[pid] = [assigns[0]]
+        else:
+            for pid, assigns in list(combined.items()):
+                if not isinstance(assigns, list) or not assigns:
+                    continue
+                primaries = [a for a in assigns if a.get("kind") == "primary"]
+                if not primaries:
+                    # If model returned only secondary topics, treat the first as primary.
+                    assigns[0]["kind"] = "primary"
+                    assigns[0]["secondary_reason"] = ""
+                    continue
+
+                if allow_multiple_primary_assignments:
+                    continue
+
+                if len(primaries) <= 1:
+                    continue
+
+                kept = primaries[0]
+                for a in assigns:
+                    if a is kept:
+                        continue
+                    if a.get("kind") == "primary":
+                        a["kind"] = "secondary"
+                        if not str(a.get("secondary_reason") or "").strip():
+                            a["secondary_reason"] = "secondary_due_to_primary_conflict"
+
+        return combined, errors, warnings
 
     def _build_orientation_policy(self, topics: list[Any]) -> dict[str, dict[str, Any]]:
         """Build per-topic policy for orientation assignment.
