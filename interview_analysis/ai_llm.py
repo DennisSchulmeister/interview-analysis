@@ -1,19 +1,30 @@
-# Forschungsprojekt KoLLI: Dashboard
-# © 2024 DHBW Karlsruhe / Studiengang Wirtschaftsinformatik
-# Dennis Schulmeister-Zimolong <dennis@wpvs.de>
+# Interview Analysis
+# © 2026 Dennis Schulmeister-Zimolong <dennis@wpvs.de>
 #
 # This source code is licensed under the BSD 3-Clause License found in the
 # LICENSE file in the root directory of this source tree.
 
-import asyncio
+"""
+Low-level LLM API wrapper.
+
+This module encapsulates the direct OpenAI SDK calls and provides small helper
+functions used by higher-level analysis code.
+
+Environment variables:
+    - `LLM_OPENAI_API_KEY`: API key for the OpenAI-compatible endpoint
+    - `LLM_OPENAI_MODEL`: Model identifier
+    - `LLM_OPENAI_BASE_URL`: Optional explicit base URL (preferred)
+    - `LLM_OPENAI_HOST`: Hostname (legacy)
+    - `LLM_OPENAI_PATH`: Optional path (legacy)
+"""
+
 import json
 import os
 
-from collections.abc   import AsyncIterator
-from typing            import Any, Coroutine, TypeAlias, cast
-from openai            import AsyncOpenAI
+from typing import Any, TypeAlias, cast
+
+from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
-from shiny             import reactive
 
 JsonValue: TypeAlias = (
     dict[str, "JsonValue"]
@@ -25,46 +36,37 @@ JsonValue: TypeAlias = (
     | None
 )
 
-def ai_conversation_available():
-    try:
-        return True if os.environ["LLM_OPENAI_API_KEY"] else False
-    except KeyError:
-        return False
-
-def ai_message(
-    text: str,
-    messages: list[ChatCompletionMessageParam] | None = None,
-) -> list[ChatCompletionMessageParam]:
-    if messages is None:
-        messages = [
-            cast(ChatCompletionMessageParam, {
-                "role": "system",
-                "content": "Wir haben verschiedene Umfragen unter den Studierenden gemacht, "
-                           "weil wir die Studierenden partizipativ in Entscheidungen und die "
-                           "Mitgestaltung ihrer Vorlesungen einbeziehen wollen. Wir wollen also "
-                           "nicht nur Lernaktivitäten fördern, sondern darüber hinaus den Studierenden "
-                           "gezielte Einflussname ermöglichen. Bitte hilf uns bei der Beantwortung "
-                           "folgender Fragen zur Auswertung der Ergebnisse. Bitte beachte, dass es sich "
-                           "hierbei um Äußerungen zu mehreren Veranstaltungen von unterschiedlichen Lehrpersonen "
-                           "mit unterschiedlichen Inhalten und unterschiedlichen Arten und Tiefe der "
-                           "Einflussnahme handelt."
-            })
-        ]
-
-    messages.append(cast(ChatCompletionMessageParam, {
-        "role": "user",
-        "content": text,
-    }))
-
-    return messages
 
 def _require_env(name: str) -> str:
+    """
+    Get a required environment variable.
+
+    Args:
+        name:
+            Environment variable name.
+
+    Returns:
+        The environment variable value.
+
+    Raises:
+        RuntimeError:
+            If the variable is missing or empty.
+    """
+
     value = os.environ.get(name)
     if not value:
-        raise KeyError(name)
+        raise RuntimeError(f"Missing required environment variable: {name}")
     return value
 
+
 def _openai_base_url() -> str:
+    """
+    Determine the base URL for the OpenAI-compatible endpoint.
+
+    Returns:
+        Base URL ending with `/v1`.
+    """
+
     base_url = os.environ.get("LLM_OPENAI_BASE_URL")
     if base_url:
         return base_url.rstrip("/")
@@ -81,31 +83,94 @@ def _openai_base_url() -> str:
 
     return f"https://{host}{prefix}"
 
+
+def _strip_code_fences(text: str) -> str:
+    """
+    Strip Markdown code fences from a model response.
+
+    This is a small robustness helper for cases where the model returns JSON in
+    a fenced block like:
+
+        ```json
+        {"ok": true}
+        ```
+
+    Args:
+        text:
+            Raw response content.
+
+    Returns:
+        Content without surrounding code fences.
+    """
+
+    stripped = text.strip()
+    if not (stripped.startswith("```") and stripped.endswith("```")):
+        return stripped
+
+    inner = stripped[3:-3].strip()
+    if inner.lower().startswith("json"):
+        inner = inner[4:].strip()
+    return inner
+
+
 def _parse_json_content(content: str) -> JsonValue:
-    if not content.strip():
+    """
+    Parse JSON content from the model response.
+
+    Args:
+        content:
+            Raw string content.
+
+    Returns:
+        Parsed JSON value. Returns None for empty responses.
+    """
+
+    prepared = _strip_code_fences(content)
+    if not prepared.strip():
         return None
-    return cast(JsonValue, json.loads(content))
+    return cast(JsonValue, json.loads(prepared))
+
 
 async def ai_conversation(
     messages: list[ChatCompletionMessageParam],
     *,
-    response_format:       dict[str, Any] | None = None,
-    parse_json:            bool = False,
+    response_format: dict[str, Any] | None = None,
+    parse_json: bool = False,
 ) -> str | JsonValue:
+    """
+    Run a chat completion call.
+
+    Args:
+        messages:
+            OpenAI chat message list.
+        response_format:
+            Optional response format payload passed to the API.
+        parse_json:
+            If true, attempts to parse the response as JSON and returns a
+            `JsonValue`.
+
+    Returns:
+        The response content as a string or parsed JSON.
+
+        On API or parsing errors, the function returns a string (when
+        `parse_json` is false) or an error object with `_error` and `_raw` fields
+        (when `parse_json` is true).
+    """
+
     client = AsyncOpenAI(
         api_key=_require_env("LLM_OPENAI_API_KEY"),
         base_url=_openai_base_url(),
     )
 
     try:
-        completion_kwargs = {}
+        completion_kwargs: dict[str, Any] = {}
 
         if response_format is not None:
             completion_kwargs["response_format"] = response_format
 
         response = await client.chat.completions.create(
-            model    = _require_env("LLM_OPENAI_MODEL"),
-            messages = messages,
+            model=_require_env("LLM_OPENAI_MODEL"),
+            messages=messages,
             **completion_kwargs,
         )
 
@@ -118,17 +183,37 @@ async def ai_conversation(
             return _parse_json_content(content)
         except json.JSONDecodeError as error:
             return {
-                "_error": f"Ungültige JSON-Antwort: {error}",
+                "_error": f"Invalid JSON response: {error}",
                 "_raw": content,
             }
     except Exception as error:
-        return f"Fehler beim Aufruf der OpenAI API. Die Antwort war: {error}"
+        if parse_json:
+            return {
+                "_error": f"Error calling the OpenAI API: {error}",
+                "_raw": None,
+            }
+        return f"Error calling the OpenAI API: {error}"
+
 
 async def ai_conversation_json(
     messages: list[ChatCompletionMessageParam],
     *,
-    json_schema:           dict[str, Any] | None = None,
+    json_schema: dict[str, Any] | None = None,
 ) -> JsonValue:
+    """
+    Run a chat completion call and always return a JSON value.
+
+    Args:
+        messages:
+            OpenAI chat message list.
+        json_schema:
+            Optional JSON schema definition for structured outputs.
+
+    Returns:
+        Parsed JSON result. Errors are returned as objects with `_error` and
+        `_raw` fields.
+    """
+
     response_format: dict[str, Any]
     if json_schema is None:
         response_format = {"type": "json_object"}
@@ -137,82 +222,11 @@ async def ai_conversation_json(
 
     result = await ai_conversation(
         messages,
-        response_format = response_format,
-        parse_json      = True,
+        response_format=response_format,
+        parse_json=True,
     )
 
     if isinstance(result, str):
         return {"_error": result, "_raw": None}
 
     return result
-
-async def ai_conversation_stream(
-    messages: list[ChatCompletionMessageParam],
-) -> AsyncIterator[str]:
-    client = AsyncOpenAI(
-        api_key=_require_env("LLM_OPENAI_API_KEY"),
-        base_url=_openai_base_url(),
-    )
-
-    accumulated = ""
-
-    try:
-        stream = await client.chat.completions.create(
-            model=_require_env("LLM_OPENAI_MODEL"),
-            messages=messages,
-            stream=True,
-        )
-
-        async for chunk in stream:
-            delta = chunk.choices[0].delta.content or ""
-
-            if not delta:
-                continue
-
-            accumulated += delta
-            yield accumulated
-    except Exception as error:
-        yield f"Fehler beim Aufruf der OpenAI API. Die Antwort war: {error}"
-
-ai_tasks: dict[str, asyncio.Task] = {}
-
-def start_ai_task(*, coro: Coroutine[Any, Any, Any], task_name: str) -> None:
-    current_task = ai_tasks.get(task_name)
-
-    if current_task is not None:
-        current_task.cancel()
-
-    task = asyncio.create_task(coro)
-
-    ai_tasks[task_name] = task
-
-    def _on_done(done_task: asyncio.Task):
-        if ai_tasks.get(task_name) is done_task:
-            del ai_tasks[task_name]
-
-    task.add_done_callback(_on_done)
-
-def cancel_ai_stream(task_name: str) -> None:
-    task = ai_tasks.get(task_name)
-    if task is None:
-        return
-
-    task.cancel()
-
-    # Remove immediately so a new task can be started right away.
-    if ai_tasks.get(task_name) is task:
-        del ai_tasks[task_name]
-
-def start_ai_stream(*, question: str, target_md: reactive.Value, task_name: str) -> None:
-    async def _run_stream():
-        try:
-            target_md.set("<span class='text-secondary'>Antwort wird generiert …</span>")
-
-            async for partial in ai_conversation_stream(ai_message(question)):
-                target_md.set(partial)
-                await reactive.flush()
-                await asyncio.sleep(0)
-        except asyncio.CancelledError:
-            raise
-
-    start_ai_task(coro=_run_stream(), task_name=task_name)
