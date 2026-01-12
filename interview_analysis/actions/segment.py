@@ -28,10 +28,9 @@ from typing import Any
 
 import yaml
 
-from odfdo import Document
-
 from interview_analysis.config import ConfigError, InterviewConfig
 from interview_analysis.hash_utils import md5_file
+from interview_analysis.transcripts.registry import read_transcript_paragraphs
 from interview_analysis.yaml_io import read_yaml_mapping
 
 
@@ -229,7 +228,7 @@ class SegmentAction:
                     False,
                 )
 
-        source_paragraphs = self._extract_odt_paragraphs(input_path)
+        source_paragraphs = read_transcript_paragraphs(input_path)
         metadata, transcript_paragraphs = self._extract_document_metadata(source_paragraphs)
 
         segments = self._build_segments(
@@ -307,47 +306,6 @@ class SegmentAction:
             return False
 
         return True
-
-    def _extract_odt_paragraphs(self, path: Path) -> list[dict[str, Any]]:
-        """
-        Extract plain-text paragraphs from an ODT document.
-
-        This function intentionally discards formatting. Each paragraph in the
-        result corresponds to a transcript paragraph (typically one speaker turn).
-
-        Args:
-            path:
-                ODT path.
-
-        Returns:
-            List of paragraph dictionaries (trimmed, without empty paragraphs).
-
-            Each paragraph dictionary has:
-                - `source_index`: 1-based paragraph number in the source document
-                - `text`: normalized plain text
-
-        Raises:
-            ConfigError:
-                If the file cannot be read or parsed.
-        """
-
-        try:
-            doc = Document(path)
-            body = doc.body
-            paras: list[dict[str, Any]] = []
-            source_index = 0
-            for p in body.get_paragraphs():
-                source_index += 1
-                text = getattr(p, "text", None)
-                if text is None:
-                    # Fall back to string conversion if the API differs.
-                    text = str(p)
-                cleaned = " ".join(str(text).split())
-                if cleaned:
-                    paras.append({"source_index": source_index, "text": cleaned})
-            return paras
-        except Exception as exc:  # noqa: BLE001
-            raise ConfigError(f"Failed to parse ODT file '{path}': {exc}") from exc
 
     def _extract_document_metadata(
         self,

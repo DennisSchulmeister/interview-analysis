@@ -99,16 +99,18 @@ Start a New Coding Project
 	 mkdir -p transcripts
 	 ```
 
-4. Put your transcript `.odt` files into `transcripts/`.
+4. Put your transcript files into `transcripts/` (`.odt`, `.txt`, or `.md`).
 5. Edit `interviews.yaml`:
-	 - set `include` to match your transcript files (e.g. `"transcripts/**/*.odt"`)
+	 - set `include` to match your transcript files (e.g. `"transcripts/**/*"` or `"transcripts/**/*.{odt,txt,md}"`)
 	 - adjust `topics` and their allowed `orientations`
 	 - optionally tune `segmentation` and `analysis`
 
 Transcript Format
 -----------------
 
-Transcripts must be **ODT files** where:
+Transcripts can be **ODT**, **TXT**, or **Markdown** (`.md`) files.
+
+ODT transcripts:
 
 * Each statement is in its **own paragraph**.
 * Each paragraph should start with a speaker label:
@@ -126,6 +128,20 @@ Transcripts must be **ODT files** where:
 
 	The program uses this to identify interviewer labels and can exclude their
 	statements from coding when configured.
+
+TXT/Markdown transcripts:
+
+* Statements are separated by **at least one empty line**.
+* Each statement should start with a label like `Name: ...`.
+* If a block does *not* start with a label, it is treated as a continuation of
+  the previous statement.
+* Optional metadata block (recommended if you want to exclude interviewer statements):
+
+	```
+	interviewer = Name1, Name2
+	```
+
+	Place it as its own block (surrounded by empty lines), near the top.
 
 Configuration (interviews.yaml)
 -------------------------------
