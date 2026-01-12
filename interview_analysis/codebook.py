@@ -46,6 +46,7 @@ def build_codebook(topics: list[TopicSpec]) -> dict[str, Any]:
             # Keep "orientations" as a list of strings for backwards compatibility
             # with existing prompting/validation logic.
             "orientations": orientation_labels,
+            "allow_multiple_orientations": bool(getattr(spec, "allow_multiple_orientations", False)),
         }
         if isinstance(spec.description, str) and spec.description.strip():
             entry["description"] = spec.description.strip()

@@ -46,6 +46,9 @@ class TopicSpec:
         orientations:
             Allowed orientation labels for the topic (with optional
             descriptions).
+        allow_multiple_orientations:
+            If True, allow assigning multiple orientations for the same topic
+            to a single statement.
         description:
             Optional hint text for the LLM (when to choose the topic and/or
             how to interpret orientations).
@@ -53,6 +56,7 @@ class TopicSpec:
 
     topic: str
     orientations: list[OrientationSpec]
+    allow_multiple_orientations: bool = False
     description: str | None = None
 
 
@@ -271,13 +275,18 @@ def _parse_topics(value: Any) -> list[TopicSpec]:
                 f"description for topic '{topic_name}' must be a non-empty string if provided"
             )
 
+        allow_multiple = item.get("allow_multiple_orientations", TopicSpec.allow_multiple_orientations)
+        if not isinstance(allow_multiple, bool):
+            raise ConfigError(
+                f"allow_multiple_orientations for topic '{topic_name}' must be a boolean if provided"
+            )
+
         topics.append(
             TopicSpec(
                 topic=topic_name.strip(),
                 orientations=orientations,
-                description=description_value.strip()
-                if isinstance(description_value, str)
-                else None,
+                allow_multiple_orientations=allow_multiple,
+                description=description_value.strip() if isinstance(description_value, str) else None,
             )
         )
 

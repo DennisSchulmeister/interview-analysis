@@ -198,8 +198,12 @@ Each entry in `topics` can be written in one of these formats:
 	```yaml
 	topics:
 	  - topic: "My Topic"
+	    allow_multiple_orientations: false
 	    description: "When to apply this topic"
 	    orientations:
+	      # When allow_multiple_orientations is false, list orientations from
+	      # highest rank to lowest rank. If multiple orientations are returned
+	      # anyway, the highest-ranked one is kept.
 	      - "Positive"
 	      - label: "Negative"
 	        description: "Only if the statement explicitly expresses criticism"
@@ -208,6 +212,7 @@ Each entry in `topics` can be written in one of these formats:
 Notes:
 
 * Orientation entries may be plain strings, or mappings with `label` and optional `description`.
+* `allow_multiple_orientations` is optional per topic (default: `false`). If `false`, at most one orientation is kept per topic per statement, using the configured orientation order as ranking (highest → lowest). Extra orientations returned by the model are dropped.
 * Changing `topics` (including descriptions) forces a re-run of `analyze` because the analysis work files store a `codebook_hash` for incremental change detection.
 
 Run a Full Analysis
@@ -247,7 +252,7 @@ The output is an OpenDocument Spreadsheet (`.ods`) with:
 * One sheet per transcript: a chronological evidence track record with columns:
 	- Topic
 	- Orientation
-	- Where Found (segment/paragraph identifier)
+	- Where Found (paragraph identifier; transcript is implied by the sheet)
 	- Evidence Quote
 
 Copyright

@@ -117,6 +117,7 @@ class AnalyzeAction:
         codebook = build_codebook(config.topics)
         cb_hash = codebook_hash(codebook)
         allowed_orientations = orientations_by_topic(codebook)
+        orientation_policy = self._build_orientation_policy(config.topics)
         strategy = config.analysis.strategy
         exclude_interviewer = config.analysis.exclude_interviewer
 
@@ -242,6 +243,7 @@ class AnalyzeAction:
                     "end_paragraph": segment.get("end_paragraph"),
                     "paragraphs": paragraph_records,
                     "errors": [],
+                    "warnings": [],
                 }
 
                 target_paragraphs = [p for p in paragraph_records if p.get("target") is True]
@@ -270,6 +272,15 @@ class AnalyzeAction:
 
                 if errors:
                     result["errors"].extend(errors)
+
+                mapping, policy_warnings = self._enforce_orientation_policy(
+                    mapping,
+                    orientation_policy=orientation_policy,
+                )
+                if policy_warnings:
+                    warnings = result.get("warnings")
+                    if isinstance(warnings, list):
+                        warnings.extend(policy_warnings)
 
                 self._apply_assignments(paragraph_records, mapping)
                 analyzed_segments.append(result)
@@ -578,6 +589,8 @@ class AnalyzeAction:
                 "For each paragraph where target=true, assign zero or more topics from the codebook. "
                 "For each assignment, if the topic defines orientations, choose exactly one allowed orientation. "
                 "If the topic has no orientations, set orientation to null (or an empty string). "
+                "Do not assign the same topic more than once per paragraph unless the codebook sets allow_multiple_orientations=true for that topic. "
+                "When allow_multiple_orientations=false, the orientations list is ordered from highest to lowest rank; if you are unsure, choose the single best (highest-ranked) match. "
                 "Use codebook topic/orientation descriptions (if present) as selection hints, but do not infer beyond the paragraph text. "
                 "Always provide an evidence quote that appears verbatim in the paragraph."
             ),
@@ -735,6 +748,8 @@ class AnalyzeAction:
                     "For each paragraph where target=true, decide whether it explicitly addresses the given topic. "
                     "If yes and an orientations list is provided, select exactly one orientation from the allowed list. "
                     "If no orientations are provided, omit orientation (or set it to null). "
+                    "Do not assign the same topic more than once per paragraph unless allow_multiple_orientations=true for that topic. "
+                    "When allow_multiple_orientations=false, the orientations list is ordered from highest to lowest rank; if you are unsure, choose the single best (highest-ranked) match. "
                     "Use the topic description and orientation descriptions (if provided) as selection hints, but do not infer beyond the paragraph text. "
                     "Always provide an evidence quote "
                     "that appears verbatim in the paragraph."
@@ -743,12 +758,17 @@ class AnalyzeAction:
                 "topic": {
                     "topic": topic_name,
                     "orientations": orientations_clean,
+                    "allow_multiple_orientations": bool(topic.get("allow_multiple_orientations", False)),
                     **(
                         {"orientation_details": orientation_details}
                         if isinstance(orientation_details, list) and orientation_details
                         else {}
                     ),
-                    **({"description": description} if isinstance(description, str) and description.strip() else {}),
+                    **(
+                        {"description": description}
+                        if isinstance(description, str) and description.strip()
+                        else {}
+                    ),
                 },
                 "paragraphs": [
                     {
@@ -815,6 +835,128 @@ class AnalyzeAction:
                 )
 
         return combined, errors
+
+    def _build_orientation_policy(self, topics: list[Any]) -> dict[str, dict[str, Any]]:
+        """Build per-topic policy for orientation assignment.
+
+        Returns a mapping:
+            topic -> {allow_multiple: bool, rank: {orientation_label: rank_int}}
+
+        Rank follows YAML order (highest -> lowest), so a higher rank number is
+        considered "stronger".
+        """
+
+        policy: dict[str, dict[str, Any]] = {}
+        for t in topics:
+            topic_name = getattr(t, "topic", None)
+            if not isinstance(topic_name, str) or not topic_name.strip():
+                continue
+            topic_name = topic_name.strip()
+
+            allow_multiple = bool(getattr(t, "allow_multiple_orientations", False))
+            rank: dict[str, int] = {}
+
+            orientations = getattr(t, "orientations", None)
+            if isinstance(orientations, list):
+                labels: list[str] = []
+                for o in orientations:
+                    label = getattr(o, "label", None)
+                    if not isinstance(label, str) or not label.strip():
+                        continue
+                    labels.append(label.strip())
+
+                # Highest-rank first: earlier items get higher scores.
+                total = len(labels)
+                for idx, label in enumerate(labels, start=1):
+                    # First occurrence wins.
+                    rank.setdefault(label, total - idx + 1)
+
+            policy[topic_name] = {"allow_multiple": allow_multiple, "rank": rank}
+
+        return policy
+
+    def _enforce_orientation_policy(
+        self,
+        mapping: dict[str, list[dict[str, Any]]],
+        *,
+        orientation_policy: dict[str, dict[str, Any]],
+    ) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
+        """Filter assignments to enforce per-topic orientation multiplicity rules."""
+
+        warnings: list[str] = []
+        if not mapping:
+            return mapping, warnings
+
+        out: dict[str, list[dict[str, Any]]] = {}
+
+        for pid, assigns in mapping.items():
+            if not isinstance(pid, str) or not isinstance(assigns, list) or not assigns:
+                continue
+
+            by_topic: dict[str, list[dict[str, Any]]] = {}
+            for a in assigns:
+                if not isinstance(a, dict):
+                    continue
+                topic = a.get("topic")
+                if not isinstance(topic, str) or not topic.strip():
+                    continue
+                by_topic.setdefault(topic.strip(), []).append(a)
+
+            filtered: list[dict[str, Any]] = []
+            for topic, items in by_topic.items():
+                pol = orientation_policy.get(topic, {"allow_multiple": False, "rank": {}})
+                allow_multiple = bool(pol.get("allow_multiple", False))
+                rank: dict[str, int] = pol.get("rank") if isinstance(pol.get("rank"), dict) else {}
+
+                # Deduplicate exact (topic, orientation, evidence) triplets.
+                seen: set[tuple[str, str, str]] = set()
+                uniq: list[dict[str, Any]] = []
+                for a in items:
+                    orientation = a.get("orientation")
+                    evidence = a.get("evidence")
+                    o = orientation.strip() if isinstance(orientation, str) else ""
+                    e = evidence.strip() if isinstance(evidence, str) else ""
+                    key = (topic, o, e)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    uniq.append(a)
+
+                if allow_multiple or len(uniq) <= 1:
+                    filtered.extend(uniq)
+                    continue
+
+                # When multiple orientations are not allowed, keep only one
+                # assignment for this topic, picking the highest-ranked
+                # orientation by YAML order.
+                def _score(a: dict[str, Any]) -> int:
+                    o = a.get("orientation")
+                    if not isinstance(o, str) or not o.strip():
+                        return -1_000_000
+                    key = o.strip()
+                    if key in rank:
+                        return int(rank[key])
+                    # Unknown orientation should lose against known ones.
+                    return -100
+
+                chosen = max(uniq, key=_score)
+                chosen_o = (chosen.get("orientation") or "").strip() if isinstance(chosen.get("orientation"), str) else ""
+                dropped = [
+                    (x.get("orientation") or "").strip()
+                    for x in uniq
+                    if x is not chosen and isinstance(x.get("orientation"), str)
+                ]
+                dropped = [d for d in dropped if d and d != chosen_o]
+                if dropped:
+                    warnings.append(
+                        f"Filtered multiple orientations for topic '{topic}' in paragraph {pid}: kept '{chosen_o}', dropped {dropped}"
+                    )
+                filtered.append(chosen)
+
+            if filtered:
+                out[pid] = filtered
+
+        return out, warnings
 
     def _apply_assignments(
         self,

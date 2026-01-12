@@ -278,6 +278,12 @@ class WriteOutputAction:
                         )
                         agg["count"] = int(agg.get("count", 0)) + 1
 
+                        # If the summary row was pre-seeded (zero-count), it
+                        # starts with an empty example quote. Use the first
+                        # observed evidence as the example.
+                        if not str(agg.get("example_quote") or "").strip() and evidence.strip():
+                            agg["example_quote"] = evidence
+
                         # Each sheet contains exactly one transcript, so the
                         # paragraph id is sufficient.
                         where_found = self._pretty_paragraph_ref(para_id)
