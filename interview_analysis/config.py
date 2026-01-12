@@ -89,6 +89,7 @@ class LlmGuidanceConfig:
     require_textual_evidence: bool = True
     list_rejected_assignments: bool = False
     default_to_conservative_orientation: bool = True
+    reasoning_language: str | None = None
 
 
 @dataclass(frozen=True)
@@ -569,6 +570,15 @@ def _parse_analysis(value: Any) -> AnalysisConfig:
                 raise ConfigError(f"analysis.llm_guidance.{key} must be a boolean")
             return v
 
+        def _get_optional_str(key: str, default: str | None) -> str | None:
+            v = llm_guidance_raw.get(key, default)
+            if v is None:
+                return None
+            if not isinstance(v, str):
+                raise ConfigError(f"analysis.llm_guidance.{key} must be a string or null")
+            text = " ".join(v.split()).strip()
+            return text or None
+
         llm_guidance = LlmGuidanceConfig(
             explain_assignments=_get_bool("explain_assignments", LlmGuidanceConfig.explain_assignments),
             require_textual_evidence=_get_bool(
@@ -582,6 +592,10 @@ def _parse_analysis(value: Any) -> AnalysisConfig:
             default_to_conservative_orientation=_get_bool(
                 "default_to_conservative_orientation",
                 LlmGuidanceConfig.default_to_conservative_orientation,
+            ),
+            reasoning_language=_get_optional_str(
+                "reasoning_language",
+                LlmGuidanceConfig.reasoning_language,
             ),
         )
     else:

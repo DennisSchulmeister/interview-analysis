@@ -31,7 +31,7 @@ from interview_analysis.hash_utils import md5_file, md5_text
 from interview_analysis.yaml_io import read_yaml_mapping
 
 
-ANALYSIS_OUTPUT_VERSION = 5
+ANALYSIS_OUTPUT_VERSION = 6
 
 
 @dataclass(frozen=True)
@@ -133,6 +133,7 @@ class AnalyzeAction:
             "require_textual_evidence": bool(llm_guidance.require_textual_evidence),
             "list_rejected_assignments": bool(llm_guidance.list_rejected_assignments),
             "default_to_conservative_orientation": bool(llm_guidance.default_to_conservative_orientation),
+            "reasoning_language": getattr(llm_guidance, "reasoning_language", None),
         }
         guidance_hash = md5_text(yaml.safe_dump(guidance_dict, sort_keys=True))
         allowed_orientations = orientations_by_topic(codebook)
@@ -588,6 +589,7 @@ class AnalyzeAction:
         exclude_interviewer: bool,
         interviewer_labels: list[str],
         require_textual_evidence: bool = True,
+        reasoning_language: str | None = None,
         extra_instructions: list[str] | None = None,
     ) -> str:
         """
@@ -613,6 +615,19 @@ class AnalyzeAction:
         if require_textual_evidence:
             system_parts.append("Only assign if there is explicit textual evidence.")
             system_parts.append("Always quote the exact evidence text from the paragraph.")
+
+        system_parts.append(
+            "Topic and orientation values must match the codebook labels exactly; do not translate or paraphrase codebook labels."
+        )
+
+        if reasoning_language and reasoning_language.strip():
+            system_parts.append(
+                f"Write any rationales/explanations in {reasoning_language.strip()}."
+            )
+
+        system_parts.append(
+            "To reduce duplicates in group discussions: only assign topics/orientations to a paragraph if it adds meaningfully new content compared to the immediately previous target paragraph. If it mostly repeats, agrees with, or continues the previous point without adding new aspects, return no assignments for it."
+        )
 
         if extra_instructions:
             system_parts.extend([x for x in extra_instructions if x.strip()])
@@ -699,6 +714,7 @@ class AnalyzeAction:
             exclude_interviewer=exclude_interviewer,
             interviewer_labels=interviewer_labels,
             require_textual_evidence=bool(llm_guidance.get("require_textual_evidence", True)),
+            reasoning_language=cast(str | None, llm_guidance.get("reasoning_language")),
             extra_instructions=extra,
         )
 
@@ -717,6 +733,9 @@ class AnalyzeAction:
             task_parts.append(
                 "For each accepted assignment, provide a very brief rationale as a few keywords (no full sentences)."
             )
+            reasoning_language = llm_guidance.get("reasoning_language")
+            if isinstance(reasoning_language, str) and reasoning_language.strip():
+                task_parts.append(f"Write the rationale keywords in {reasoning_language.strip()}.")
         if list_rejected:
             task_parts.append(
                 "Additionally, for each paragraph include up to 5 considered-but-rejected assignments (topic + orientation if applicable)."
@@ -724,6 +743,7 @@ class AnalyzeAction:
         task_parts.append("For each assignment, if the topic defines orientations, choose exactly one allowed orientation.")
         task_parts.append("If the topic has no orientations, set orientation to null (or an empty string).")
         task_parts.append("Do not assign the same topic more than once per paragraph unless the codebook sets allow_multiple_orientations=true for that topic.")
+        task_parts.append("When outputting 'topic' and 'orientation', copy the strings verbatim from the codebook; do not translate.")
         if conservative_orientation:
             task_parts.append("When allow_multiple_orientations=false, the orientations list is ordered from highest to lowest rank; if you are unsure, choose the single best (highest-ranked) match.")
         task_parts.append("Use codebook topic/orientation descriptions (if present) as selection hints, but do not infer beyond the paragraph text.")
@@ -969,6 +989,7 @@ class AnalyzeAction:
             exclude_interviewer=exclude_interviewer,
             interviewer_labels=interviewer_labels,
             require_textual_evidence=bool(llm_guidance.get("require_textual_evidence", True)),
+            reasoning_language=cast(str | None, llm_guidance.get("reasoning_language")),
             extra_instructions=extra,
         )
 
@@ -1002,6 +1023,9 @@ class AnalyzeAction:
                 task_parts.append(
                     "For each accepted match, provide a very brief rationale as a few keywords (no full sentences)."
                 )
+                reasoning_language = llm_guidance.get("reasoning_language")
+                if isinstance(reasoning_language, str) and reasoning_language.strip():
+                    task_parts.append(f"Write the rationale keywords in {reasoning_language.strip()}.")
             if list_rejected:
                 task_parts.append(
                     "Additionally, include a 'rejected_assignments' list containing paragraph ids where this topic was considered but rejected (no rationale)."

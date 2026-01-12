@@ -21,6 +21,9 @@ analysis:
 
   llm_guidance:
     explain_assignments: true
+    # Optional: language for rationale keywords. Topic/orientation labels are still returned verbatim.
+    # Examples: English, Deutsch
+    reasoning_language: English
     require_textual_evidence: true
     list_rejected_assignments: true
     default_to_conservative_orientation: true

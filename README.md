@@ -401,6 +401,7 @@ Optional sections:
 * `analysis.llm_guidance` (mapping, optional)
 	- optional flags to tune *how* the LLM explains and reports decisions
 	- `explain_assignments` (bool, default: false): include a very short keyword-style rationale per accepted assignment
+	- `reasoning_language` (string or null, default: null): language used for rationale keywords (topics/orientations are always returned verbatim from the codebook)
 	- `require_textual_evidence` (bool, default: true): keep the strict “explicit textual evidence only” rule in the system prompt
 	- `list_rejected_assignments` (bool, default: false): include a short list of considered-but-rejected assignments (topic/orientation only)
 	- `default_to_conservative_orientation` (bool, default: true): when unsure, prefer the highest-ranked configured orientation (highest → lowest)
