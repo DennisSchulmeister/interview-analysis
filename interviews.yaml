@@ -1,6 +1,8 @@
 # Recursive grep pattern for transcript files to include/exclude
 # Supported transcript formats: .odt, .txt, .md
-include: "transcripts/**/*"
+# 'include' can be a string or a list of strings.
+include: ["transcripts/**/*.odt", "transcripts/**/*.txt", "transcripts/**/*.md"]
+# 'exclude' is optional and can be a string or a list of strings.
 exclude: "private/**"
 
 # Working directory for intermediate files

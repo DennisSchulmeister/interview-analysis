@@ -1,0 +1,33 @@
+Interviewer = A
+
+A: Could you briefly describe your teaching background before using the new teaching method?
+
+B: I have been teaching for about two years so far, mainly supporting courses and leading a few smaller seminars.
+
+A: What motivated you to try this particular teaching method?
+
+B: The method was introduced as part of a faculty-wide initiative, and I was encouraged to test it in one of my courses.
+
+A: How did you integrate the method into your course?
+
+B: I tried it once in a single session to see how it would work with my group of students.
+
+A: How did this affect your own teaching?
+
+B: I found it somewhat challenging to manage the session, and it felt more demanding than my usual approach.
+
+A: Did you observe any effects on student learning?
+
+B: I am not sure whether it had a clear effect on learning, as the session was short and student performance did not noticeably change.
+
+A: How did students participate during these sessions?
+
+B: A small group of students participated actively, but most of the class remained passive.
+
+A: How manageable was the method in terms of workload and resources?
+
+B: For me, it was difficult to fit the preparation into my regular workload, especially alongside other teaching responsibilities.
+
+A: Do you plan to continue using this teaching method in the future?
+
+B: At this point, I am not planning to use it again unless there is more guidance or support available.

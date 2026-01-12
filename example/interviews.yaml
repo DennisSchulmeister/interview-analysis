@@ -1,0 +1,90 @@
+include:
+  - "transcripts/**/*.odt"
+  - "transcripts/**/*.txt"
+  - "transcripts/**/*.md"
+
+exclude: "private/**"
+
+workdir: ./work
+outfile: results.ods
+
+topics:
+  - topic: Prior teaching experience
+    description: Explicit references to lecturers’ background, seniority, or prior pedagogical practices.
+    orientations:
+      - label: Extensive experience
+        description: Statements indicating many years of teaching, prior innovations, or leadership roles in teaching.
+      - label: Moderate experience
+        description: Statements describing some years of teaching and selective experimentation with methods.
+      - label: Limited experience
+        description: Statements indicating early-career status or minimal prior exposure to varied teaching methods.
+
+  - topic: Motivation for adoption
+    description: Stated reasons for trying the novel teaching method.
+    orientations:
+      - label: Pedagogical improvement
+        description: Explicit intent to improve student engagement, understanding, or course quality.
+      - label: External requirement or encouragement
+        description: Adoption due to institutional initiatives, project participation, or departmental expectations.
+      - label: Personal curiosity or experimentation
+        description: Motivation framed as interest, exploration, or willingness to try something new.
+
+  - topic: Implementation approach
+    description: Descriptions of how the method was introduced and used in practice.
+    orientations:
+      - label: Full integration
+        description: Statements describing systematic or course-wide use of the method.
+      - label: Partial or selective use
+        description: Use in specific sessions, topics, or phases of the course.
+      - label: Trial or pilot use
+        description: Limited, exploratory, or one-off implementation.
+
+  - topic: Perceived teaching impact
+    description: Explicit statements about effects on the lecturer’s own teaching practice.
+    orientations:
+      - label: Positive impact
+        description: Statements indicating improvements in teaching clarity, structure, or interaction.
+      - label: Neutral or mixed impact
+        description: Statements noting both advantages and disadvantages, or minimal change.
+      - label: Challenging or negative impact
+        description: Statements highlighting increased workload, complexity, or disruption.
+
+  - topic: Perceived student learning effect
+    description: Direct references to student learning outcomes as perceived by the lecturer.
+    orientations:
+      - label: Improved learning
+        description: Statements reporting better understanding, engagement, or performance by students.
+      - label: Unclear or unobserved effect
+        description: Statements indicating uncertainty or lack of evidence regarding learning effects.
+      - label: No improvement or negative effect
+        description: Statements suggesting unchanged or worsened learning outcomes.
+
+  - topic: Student participation and engagement
+    description: Descriptions of observable student behavior and involvement.
+    orientations:
+      - label: Increased participation
+        description: Statements noting more discussion, questions, or active involvement.
+      - label: Uneven or selective participation
+        description: Participation limited to certain students or situations.
+      - label: Low or unchanged participation
+        description: Statements indicating little change in student involvement.
+
+  - topic: Practical feasibility
+    description: Explicit comments on effort, resources, and constraints.
+    orientations:
+      - label: Easily manageable
+        description: Statements indicating low additional effort or good fit with existing structures.
+      - label: Manageable with effort
+        description: Statements noting additional preparation or support needs.
+      - label: Difficult to sustain
+        description: Statements describing time pressure, lack of resources, or scalability issues.
+
+  - topic: Future intentions
+    description: Statements about planned future use of the teaching method.
+    orientations:
+      - label: Continued or expanded use
+        description: Intent to keep using or further develop the method.
+      - label: Conditional use
+        description: Continued use dependent on changes, support, or evidence.
+      - label: Discontinuation
+        description: Explicit intent not to use the method again.
