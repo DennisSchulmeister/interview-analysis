@@ -179,7 +179,7 @@ Optional sections:
 
 Each entry in `topics` can be written in one of these formats:
 
-1) Legacy mapping (topic -> orientations):
+1) Simple mapping (topic -> orientations):
 
 	```yaml
 	topics:
