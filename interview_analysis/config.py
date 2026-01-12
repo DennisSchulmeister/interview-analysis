@@ -21,6 +21,21 @@ import yaml
 
 
 @dataclass(frozen=True)
+class OrientationSpec:
+    """Orientation definition.
+
+    Attributes:
+        label:
+            Orientation label.
+        description:
+            Optional hint text for the LLM.
+    """
+
+    label: str
+    description: str | None = None
+
+
+@dataclass(frozen=True)
 class TopicSpec:
     """
     Topic definition with its allowed orientations.
@@ -29,11 +44,16 @@ class TopicSpec:
         topic:
             Human-readable topic name.
         orientations:
-            Allowed orientation labels for the topic.
+            Allowed orientation labels for the topic (with optional
+            descriptions).
+        description:
+            Optional hint text for the LLM (when to choose the topic and/or
+            how to interpret orientations).
     """
 
     topic: str
-    orientations: list[str]
+    orientations: list[OrientationSpec]
+    description: str | None = None
 
 
 @dataclass(frozen=True)
@@ -140,8 +160,18 @@ def _parse_topics(value: Any) -> list[TopicSpec]:
     """
     Parse and validate the `topics` section from the YAML.
 
-    The expected format is a list of single-key mappings, where the key is the
-    topic name and the value is a list of orientations.
+     Supported topic formats:
+
+     1) Legacy format (topic -> orientations):
+         - Topic name: [Orientation1, Orientation2]
+
+     2) Topic without orientations:
+         - "Topic name"
+
+     3) Expanded format with optional description and orientations:
+         - topic: "Topic name"
+                 orientations: [ ... ]   # optional; strings or mapping entries
+            description: "..."      # optional
 
     Args:
         value:
@@ -160,27 +190,134 @@ def _parse_topics(value: Any) -> list[TopicSpec]:
 
     topics: list[TopicSpec] = []
     for idx, item in enumerate(value, start=1):
-        if not isinstance(item, dict) or len(item) != 1:
+        if isinstance(item, str):
+            if not item.strip():
+                raise ConfigError(f"Topic must be a non-empty string (problem at index {idx})")
+            topics.append(TopicSpec(topic=item.strip(), orientations=[]))
+            continue
+
+        if not isinstance(item, dict):
             raise ConfigError(
-                "Each item in 'topics' must be a mapping with exactly one key (topic name)"
-                f" (problem at index {idx})"
+                f"Each item in 'topics' must be a string or mapping (problem at index {idx})"
             )
 
-        (topic_name, orientations) = next(iter(item.items()))
+        # Legacy format: {"Topic name": ["Orientation", ...]}
+        if len(item) == 1 and "topic" not in item:
+            (topic_name, orientations) = next(iter(item.items()))
+            if not isinstance(topic_name, str) or not topic_name.strip():
+                raise ConfigError(f"Topic name must be a non-empty string (problem at index {idx})")
+
+            if orientations is None:
+                topics.append(TopicSpec(topic=topic_name.strip(), orientations=[]))
+                continue
+
+            parsed_orientations = _parse_orientations(
+                orientations,
+                topic_name=topic_name.strip(),
+                context=f"topics[{idx}]",
+            )
+
+            topics.append(TopicSpec(topic=topic_name.strip(), orientations=parsed_orientations))
+            continue
+
+        # Expanded format: {topic: ..., orientations?: [...], description?: ...}
+        topic_name = item.get("topic")
         if not isinstance(topic_name, str) or not topic_name.strip():
-            raise ConfigError(f"Topic name must be a non-empty string (problem at index {idx})")
-        if not isinstance(orientations, list) or not all(
-            isinstance(o, str) and o.strip() for o in orientations
+            raise ConfigError(
+                f"Expanded topic entry must have a non-empty 'topic' field (problem at index {idx})"
+            )
+
+        orientations_value = item.get("orientations")
+        orientations = _parse_orientations(
+            orientations_value,
+            topic_name=topic_name.strip(),
+            context=f"topics[{idx}].orientations",
+        )
+
+        description_value = item.get("description")
+        if description_value is None:
+            description_value = item.get("hint")
+
+        if description_value is not None and (
+            not isinstance(description_value, str) or not description_value.strip()
         ):
             raise ConfigError(
-                f"Orientations for topic '{topic_name}' must be a list of non-empty strings"
+                f"description for topic '{topic_name}' must be a non-empty string if provided"
             )
 
         topics.append(
-            TopicSpec(topic=topic_name.strip(), orientations=[o.strip() for o in orientations])
+            TopicSpec(
+                topic=topic_name.strip(),
+                orientations=orientations,
+                description=description_value.strip()
+                if isinstance(description_value, str)
+                else None,
+            )
         )
 
     return topics
+
+
+def _parse_orientations(value: Any, *, topic_name: str, context: str) -> list[OrientationSpec]:
+    """Parse the orientations list for a single topic.
+
+    Supported orientation formats:
+    - "Label"
+    - {label: "Label", description: "..."}
+    - {orientation: "Label", description: "..."}  (alias)
+    - {"Label": "..."}  (short mapping form)
+    """
+
+    if value is None:
+        return []
+
+    if not isinstance(value, list):
+        raise ConfigError(f"orientations for topic '{topic_name}' must be a list if provided ({context})")
+
+    out: list[OrientationSpec] = []
+    for o_idx, o in enumerate(value, start=1):
+        if isinstance(o, str):
+            if not o.strip():
+                raise ConfigError(
+                    f"Orientation label must be a non-empty string for topic '{topic_name}' ({context}[{o_idx}])"
+                )
+            out.append(OrientationSpec(label=o.strip()))
+            continue
+
+        if not isinstance(o, dict):
+            raise ConfigError(
+                f"Orientation must be a string or mapping for topic '{topic_name}' ({context}[{o_idx}])"
+            )
+
+        label_value: Any | None = None
+        description_value: Any | None = None
+
+        if "label" in o or "orientation" in o:
+            label_value = o.get("label") if "label" in o else o.get("orientation")
+            description_value = o.get("description")
+            if description_value is None:
+                description_value = o.get("hint")
+        elif len(o) == 1:
+            (k, v) = next(iter(o.items()))
+            label_value = k
+            description_value = v
+
+        if not isinstance(label_value, str) or not label_value.strip():
+            raise ConfigError(
+                f"Orientation mapping must define a non-empty label for topic '{topic_name}' ({context}[{o_idx}])"
+            )
+
+        desc: str | None = None
+        if description_value is not None:
+            if not isinstance(description_value, str) or not description_value.strip():
+                raise ConfigError(
+                    f"Orientation description must be a non-empty string for topic '{topic_name}' ({context}[{o_idx}])"
+                )
+            desc = description_value.strip()
+
+        out.append(OrientationSpec(label=label_value.strip(), description=desc))
+
+    return out
 
 
 def load_config(path: Path) -> InterviewConfig:

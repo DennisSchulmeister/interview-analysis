@@ -25,6 +25,7 @@ from typing import Any
 import yaml
 
 from interview_analysis.ai_llm import ai_conversation_json
+from interview_analysis.codebook import build_codebook, codebook_hash, orientations_by_topic
 from interview_analysis.config import ConfigError, InterviewConfig
 from interview_analysis.hash_utils import md5_file
 from interview_analysis.yaml_io import read_yaml_mapping
@@ -113,7 +114,9 @@ class AnalyzeAction:
             print("No documents found in segmentation index. Nothing to analyze.")
             return
 
-        codebook = self._build_codebook(config)
+        codebook = build_codebook(config.topics)
+        cb_hash = codebook_hash(codebook)
+        allowed_orientations = orientations_by_topic(codebook)
         strategy = config.analysis.strategy
         exclude_interviewer = config.analysis.exclude_interviewer
 
@@ -156,6 +159,7 @@ class AnalyzeAction:
                     existing,
                     segments_file=str(segments_path),
                     segments_md5=segments_md5,
+                    codebook_hash=cb_hash,
                     strategy=strategy,
                     exclude_interviewer=exclude_interviewer,
                 ):
@@ -247,6 +251,7 @@ class AnalyzeAction:
                         segment_id=seg_id,
                         paragraphs=paragraph_records,
                         codebook=codebook,
+                        allowed_orientations=allowed_orientations,
                         exclude_interviewer=exclude_interviewer,
                         interviewer_labels=interviewers,
                     )
@@ -255,6 +260,7 @@ class AnalyzeAction:
                         segment_id=seg_id,
                         paragraphs=paragraph_records,
                         codebook=codebook,
+                        allowed_orientations=allowed_orientations,
                         exclude_interviewer=exclude_interviewer,
                         interviewer_labels=interviewers,
                     )
@@ -274,6 +280,7 @@ class AnalyzeAction:
                 "input": {
                     "segments_file": str(segments_path),
                     "segments_md5": segments_md5,
+                    "codebook_hash": cb_hash,
                 },
                 "document_id": doc_id,
                 "source": seg_doc.get("source"),
@@ -312,6 +319,7 @@ class AnalyzeAction:
         *,
         segments_file: str,
         segments_md5: str,
+        codebook_hash: str,
         strategy: str,
         exclude_interviewer: bool,
     ) -> bool:
@@ -327,6 +335,9 @@ class AnalyzeAction:
         if str(inp.get("segments_md5") or "") != segments_md5:
             return False
 
+        if str(inp.get("codebook_hash") or "") != codebook_hash:
+            return False
+
         analysis_cfg = existing.get("analysis")
         if not isinstance(analysis_cfg, dict):
             return False
@@ -338,29 +349,6 @@ class AnalyzeAction:
             return False
 
         return True
-
-    def _build_codebook(self, config: InterviewConfig) -> dict[str, Any]:
-        """
-        Build the codebook structure passed to the LLM and written to work files.
-
-        Args:
-            config:
-                Loaded configuration.
-
-        Returns:
-            Codebook mapping.
-        """
-
-        topics: list[dict[str, Any]] = []
-        for idx, spec in enumerate(config.topics, start=1):
-            topics.append(
-                {
-                    "id": f"t{idx}",
-                    "topic": spec.topic,
-                    "orientations": list(spec.orientations),
-                }
-            )
-        return {"topics": topics}
 
     def _prepare_paragraphs_for_coding(
         self,
@@ -518,6 +506,7 @@ class AnalyzeAction:
         segment_id: str,
         paragraphs: list[dict[str, Any]],
         codebook: dict[str, Any],
+        allowed_orientations: dict[str, list[str]],
         exclude_interviewer: bool,
         interviewer_labels: list[str],
     ) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
@@ -548,7 +537,8 @@ class AnalyzeAction:
             "segment_id": segment_id,
             "task": (
                 "For each paragraph where target=true, assign zero or more topics from the codebook. "
-                "For each assignment, choose exactly one allowed orientation for that topic and "
+                "For each assignment, if the topic defines orientations, choose exactly one allowed orientation. "
+                "If the topic has no orientations, set orientation to null (or an empty string). "
                 "provide an evidence quote that appears verbatim in the paragraph."
             ),
             "interviewer_labels": interviewer_labels if exclude_interviewer else [],
@@ -569,7 +559,7 @@ class AnalyzeAction:
                         "assignments": [
                             {
                                 "topic": "<topic name>",
-                                "orientation": "<one of the allowed orientations>",
+                                "orientation": "<one allowed orientation, or null if none>",
                                 "evidence": "<exact quote from the paragraph>",
                             }
                         ],
@@ -610,14 +600,36 @@ class AnalyzeAction:
                 topic = a.get("topic")
                 orientation = a.get("orientation")
                 evidence = a.get("evidence")
-                if not isinstance(topic, str) or not isinstance(orientation, str) or not isinstance(evidence, str):
+                if not isinstance(topic, str) or not isinstance(evidence, str):
                     continue
-                if not topic.strip() or not orientation.strip() or not evidence.strip():
+                if not topic.strip() or not evidence.strip():
                     continue
+
+                topic_key = topic.strip()
+                allowed = allowed_orientations.get(topic_key, [])
+
+                orientation_norm = ""
+                if isinstance(orientation, str):
+                    orientation_norm = orientation.strip()
+                elif orientation is None:
+                    orientation_norm = ""
+                else:
+                    # unknown type
+                    continue
+
+                if allowed:
+                    if not orientation_norm:
+                        continue
+                    if orientation_norm not in allowed:
+                        continue
+                else:
+                    # Topic without orientations: normalize to empty string.
+                    orientation_norm = ""
+
                 normalized.append(
                     {
-                        "topic": topic.strip(),
-                        "orientation": orientation.strip(),
+                        "topic": topic_key,
+                        "orientation": orientation_norm,
                         "evidence": evidence,
                     }
                 )
@@ -632,6 +644,7 @@ class AnalyzeAction:
         segment_id: str,
         paragraphs: list[dict[str, Any]],
         codebook: dict[str, Any],
+        allowed_orientations: dict[str, list[str]],
         exclude_interviewer: bool,
         interviewer_labels: list[str],
     ) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
@@ -667,21 +680,35 @@ class AnalyzeAction:
                 continue
             topic_name = topic.get("topic")
             orientations = topic.get("orientations")
+            orientation_details = topic.get("orientation_details")
+            description = topic.get("description")
+
             if not isinstance(topic_name, str) or not isinstance(orientations, list):
                 continue
+
+            orientations_clean = [o.strip() for o in orientations if isinstance(o, str) and o.strip()]
+            allowed_orientations[topic_name] = orientations_clean
 
             print(f"    * Topic: {topic_name}")
             user_payload = {
                 "segment_id": segment_id,
                 "task": (
                     "For each paragraph where target=true, decide whether it explicitly addresses the given topic. "
-                    "If yes, select exactly one orientation from the allowed list and provide an evidence quote "
+                    "If yes and an orientations list is provided, select exactly one orientation from the allowed list. "
+                    "If no orientations are provided, omit orientation (or set it to null). "
+                    "Always provide an evidence quote "
                     "that appears verbatim in the paragraph."
                 ),
                 "interviewer_labels": interviewer_labels if exclude_interviewer else [],
                 "topic": {
                     "topic": topic_name,
-                    "orientations": orientations,
+                    "orientations": orientations_clean,
+                    **(
+                        {"orientation_details": orientation_details}
+                        if isinstance(orientation_details, list) and orientation_details
+                        else {}
+                    ),
+                    **({"description": description} if isinstance(description, str) and description.strip() else {}),
                 },
                 "paragraphs": [
                     {
@@ -695,7 +722,7 @@ class AnalyzeAction:
                     "matches": [
                         {
                             "paragraph_id": "<paragraph id>",
-                            "orientation": "<one of the allowed orientations>",
+                            "orientation": "<one of the allowed orientations, or null if none>",
                             "evidence": "<exact quote from the paragraph>",
                         }
                     ]
@@ -723,15 +750,30 @@ class AnalyzeAction:
                 pid = m.get("paragraph_id")
                 orientation = m.get("orientation")
                 evidence = m.get("evidence")
-                if not isinstance(pid, str) or not isinstance(orientation, str) or not isinstance(evidence, str):
+                if not isinstance(pid, str) or not isinstance(evidence, str):
                     continue
-                if not pid.strip() or not orientation.strip() or not evidence.strip():
+                if not pid.strip() or not evidence.strip():
                     continue
+
+                orientation_norm = ""
+                if isinstance(orientation, str):
+                    orientation_norm = orientation.strip()
+                elif orientation is None:
+                    orientation_norm = ""
+                else:
+                    continue
+
+                allowed = allowed_orientations.get(topic_name, [])
+                if allowed:
+                    if not orientation_norm or orientation_norm not in allowed:
+                        continue
+                else:
+                    orientation_norm = ""
 
                 combined.setdefault(pid, []).append(
                     {
                         "topic": topic_name,
-                        "orientation": orientation.strip(),
+                        "orientation": orientation_norm,
                         "evidence": evidence,
                     }
                 )

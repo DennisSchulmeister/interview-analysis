@@ -151,8 +151,7 @@ Required top-level options:
 * `include` (string): glob pattern for transcripts to include
 * `workdir` (string): work directory for intermediate files (e.g. `./work`)
 * `outfile` (string): path to the final `.ods` report (e.g. `results.ods`)
-* `topics` (list): a list of topic definitions; each entry is a mapping
-	`{Topic name: [Orientation1, Orientation2, …]}`
+* `topics` (list): a list of topic definitions (the codebook)
 
 Optional top-level options:
 
@@ -175,6 +174,41 @@ Optional sections:
 * `analysis.strategy` (string, default: `segment`)
 	- `segment`: one LLM call per segment with the full codebook
 	- `topic`: one LLM call per segment per topic (more robust, more costly)
+
+### topics (codebook)
+
+Each entry in `topics` can be written in one of these formats:
+
+1) Legacy mapping (topic -> orientations):
+
+	```yaml
+	topics:
+	  - My Topic: [Positive, Negative]
+	```
+
+2) Topic without orientations:
+
+	```yaml
+	topics:
+	  - "My Topic"
+	```
+
+3) Expanded topic object with optional descriptions:
+
+	```yaml
+	topics:
+	  - topic: "My Topic"
+	    description: "When to apply this topic"
+	    orientations:
+	      - "Positive"
+	      - label: "Negative"
+	        description: "Only if the statement explicitly expresses criticism"
+	```
+
+Notes:
+
+* Orientation entries may be plain strings, or mappings with `label` and optional `description`.
+* Changing `topics` (including descriptions) forces a re-run of `analyze` because the analysis work files store a `codebook_hash` for incremental change detection.
 
 Run a Full Analysis
 -------------------

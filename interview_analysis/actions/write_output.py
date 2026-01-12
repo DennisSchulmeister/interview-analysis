@@ -201,22 +201,27 @@ class WriteOutputAction:
                         topic = a.get("topic")
                         orientation = a.get("orientation")
                         evidence = a.get("evidence")
-                        if not isinstance(topic, str) or not isinstance(orientation, str) or not isinstance(
-                            evidence, str
-                        ):
+                        if not isinstance(topic, str) or not isinstance(evidence, str):
                             continue
 
                         topic_key = topic.strip()
-                        orientation_key = orientation.strip()
-                        if not topic_key or not orientation_key:
+                        orientation_key = ""
+                        if isinstance(orientation, str):
+                            orientation_key = orientation.strip()
+                        elif orientation is None:
+                            orientation_key = ""
+
+                        if not topic_key:
                             continue
 
-                        key = (topic_key, orientation_key)
+                        orientation_bucket = orientation_key if orientation_key else "(none)"
+
+                        key = (topic_key, orientation_bucket)
                         agg = summary_counts.setdefault(
                             key,
                             {
                                 "topic": topic_key,
-                                "orientation": orientation_key,
+                                "orientation": orientation_bucket,
                                 "count": 0,
                                 "example_quote": evidence,
                             },
@@ -227,7 +232,7 @@ class WriteOutputAction:
                         evidence_rows.append(
                             {
                                 "topic": topic_key,
-                                "orientation": orientation_key,
+                                "orientation": orientation_bucket,
                                 "where_found": where_found,
                                 "evidence": evidence,
                                 "paragraph_index": para_index,

@@ -39,3 +39,29 @@ def md5_file(path: Path) -> str:
             hasher.update(chunk)
 
     return hasher.hexdigest()
+
+
+def md5_bytes(data: bytes) -> str:
+    """Compute an MD5 hash for in-memory bytes.
+
+    Args:
+        data:
+            Raw bytes.
+
+    Returns:
+        Lowercase hex MD5 digest.
+    """
+
+    try:
+        hasher = hashlib.md5(usedforsecurity=False)  # type: ignore[call-arg]
+    except TypeError:
+        hasher = hashlib.md5()
+
+    hasher.update(data)
+    return hasher.hexdigest()
+
+
+def md5_text(text: str) -> str:
+    """Compute an MD5 hash for a text string (UTF-8 encoded)."""
+
+    return md5_bytes(text.encode("utf-8"))
