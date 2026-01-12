@@ -15,7 +15,7 @@ Overview
 --------
 
 This project is a small CLI tool to support **non-interpretive interview coding**.
-It takes interview transcripts (ODT files), splits them into overlapping text segments,
+It takes interview transcripts (ODT, TXT, MD files), splits them into overlapping text segments,
 uses an LLM to assign **topics** and **orientations** to statements, and finally
 creates an `.ods` spreadsheet report with an aggregated summary and a per-transcript
 track record.
