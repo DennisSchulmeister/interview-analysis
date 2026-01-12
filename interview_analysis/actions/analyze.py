@@ -567,10 +567,18 @@ class AnalyzeAction:
             return False
 
         for label in interviewer_labels:
-            if not label.strip():
+            if not isinstance(label, str) or not label.strip():
                 continue
-            escaped = re.escape(label.strip())
-            if re.match(rf"^{escaped}\s*[:\-–]\s+", stripped, flags=re.IGNORECASE):
+
+            normalized = " ".join(label.split()).strip()
+            normalized = normalized.rstrip(" :\t-–—").strip()
+            if not normalized:
+                continue
+
+            escaped = re.escape(normalized)
+            # Many real-world transcripts omit the space after ':' or '-' (e.g., "Name:Text").
+            # We therefore allow optional whitespace after the separator.
+            if re.match(rf"^{escaped}\s*[:\-–—]\s*\S", stripped, flags=re.IGNORECASE):
                 return True
         return False
 

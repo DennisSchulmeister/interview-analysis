@@ -367,6 +367,7 @@ class SegmentAction:
         )
 
         interviewers: list[str] = []
+        interviewer_norm_seen: set[str] = set()
         fields: dict[str, Any] = {}
         transcript_paragraphs: list[dict[str, Any]] = []
         removed_metadata_paragraphs = 0
@@ -385,9 +386,12 @@ class SegmentAction:
             if key == "interviewer":
                 if raw_value:
                     for part in raw_value.split(","):
-                        label = part.strip()
-                        if label and label not in interviewers:
+                        label = " ".join(part.split()).strip()
+                        label = label.rstrip(" :\t-–—").strip()
+                        norm = label.casefold()
+                        if label and norm not in interviewer_norm_seen:
                             interviewers.append(label)
+                            interviewer_norm_seen.add(norm)
                 continue
 
             if not raw_value:
