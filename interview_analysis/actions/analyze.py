@@ -31,7 +31,7 @@ from interview_analysis.hash_utils import md5_file, md5_text
 from interview_analysis.yaml_io import read_yaml_mapping
 
 
-ANALYSIS_OUTPUT_VERSION = 4
+ANALYSIS_OUTPUT_VERSION = 5
 
 
 @dataclass(frozen=True)
@@ -712,7 +712,6 @@ class AnalyzeAction:
             "If allow_secondary_assignments=true, you may assign multiple topics per paragraph.",
             "When allow_multiple_primary_assignments=false, assign exactly one primary topic per paragraph when any topic applies, and mark any additional topics as secondary.",
             "When allow_multiple_primary_assignments=true, you may mark multiple topics as primary if they are equally central (e.g., very long statements).",
-            "Secondary topics must include a short keyword note explaining why they are secondary.",
         ]
         if explain_assignments:
             task_parts.append(
@@ -763,7 +762,6 @@ class AnalyzeAction:
                                     else {}
                                 ),
                                 "kind": "<primary|secondary>",
-                                "secondary_reason": "<keyword if kind=secondary, else empty>",
                             }
                         ],
                     }
@@ -852,7 +850,6 @@ class AnalyzeAction:
                 evidence = a.get("evidence")
                 rationale = a.get("rationale")
                 kind = a.get("kind")
-                secondary_reason = a.get("secondary_reason")
                 if not isinstance(topic, str) or not isinstance(evidence, str):
                     continue
                 if not topic.strip() or not evidence.strip():
@@ -880,16 +877,9 @@ class AnalyzeAction:
                     orientation_norm = ""
 
                 kind_norm = self._normalize_secondary_kind(kind)
-                secondary_reason_norm = ""
                 if not allow_secondary_assignments:
                     kind_norm = "primary"
-                elif kind_norm == "secondary":
-                    if isinstance(secondary_reason, str):
-                        secondary_reason_norm = " ".join(secondary_reason.split()).strip()
-                    if not secondary_reason_norm:
-                        # Require a keyword note for secondary assignments.
-                        continue
-                else:
+                elif kind_norm != "secondary":
                     kind_norm = "primary"
 
                 rationale_norm = ""
@@ -907,7 +897,6 @@ class AnalyzeAction:
                         "evidence": evidence,
                         "rationale": rationale_norm,
                         "kind": kind_norm,
-                        "secondary_reason": secondary_reason_norm,
                         "rejected_assignments": rejected_norm,
                     }
                 )
@@ -935,14 +924,11 @@ class AnalyzeAction:
                     downgraded = primaries[1:]
                     for x in downgraded:
                         x["kind"] = "secondary"
-                        if not str(x.get("secondary_reason") or "").strip():
-                            x["secondary_reason"] = "secondary_due_to_primary_conflict"
                     mapping[pid] = [kept] + secondaries + downgraded
             else:
                 # If model returned only secondary topics, treat the first as primary.
                 kept = secondaries[0]
                 kept["kind"] = "primary"
-                kept["secondary_reason"] = ""
                 mapping[pid] = [kept] + secondaries[1:]
 
         return mapping, errors, warnings
@@ -1011,7 +997,6 @@ class AnalyzeAction:
                 "If allow_secondary_assignments=true, classify a match as primary if it is central to the statement, or secondary if it is only a minor mention.",
                 "When allow_multiple_primary_assignments=false, only one topic per paragraph should be primary overall; mark other topic matches as secondary.",
                 "When allow_multiple_primary_assignments=true, multiple topic matches may be marked as primary if they are equally central (e.g., very long statements).",
-                "Secondary matches must include a short keyword note explaining why they are secondary.",
             ]
             if explain_assignments:
                 task_parts.append(
@@ -1071,7 +1056,6 @@ class AnalyzeAction:
                                 else {}
                             ),
                             "kind": "<primary|secondary>",
-                            "secondary_reason": "<keyword if kind=secondary, else empty>",
                         }
                     ],
                     **(
@@ -1140,7 +1124,6 @@ class AnalyzeAction:
                 evidence = m.get("evidence")
                 rationale = m.get("rationale")
                 kind = m.get("kind")
-                secondary_reason = m.get("secondary_reason")
                 if not isinstance(pid, str) or not isinstance(evidence, str):
                     continue
                 if not pid.strip() or not evidence.strip():
@@ -1162,14 +1145,10 @@ class AnalyzeAction:
                     orientation_norm = ""
 
                 kind_norm = "primary"
-                secondary_reason_norm = ""
                 if allow_secondary_assignments:
                     kind_norm = self._normalize_secondary_kind(kind)
-                    if kind_norm == "secondary":
-                        if isinstance(secondary_reason, str):
-                            secondary_reason_norm = " ".join(secondary_reason.split()).strip()
-                        if not secondary_reason_norm:
-                            continue
+                    if kind_norm != "secondary":
+                        kind_norm = "primary"
                 else:
                     kind_norm = "primary"
 
@@ -1187,7 +1166,6 @@ class AnalyzeAction:
                         "evidence": evidence,
                         "rationale": rationale_norm,
                         "kind": kind_norm,
-                        "secondary_reason": secondary_reason_norm,
                     }
                 )
 
@@ -1209,7 +1187,6 @@ class AnalyzeAction:
                 if not primaries:
                     # If model returned only secondary topics, treat the first as primary.
                     assigns[0]["kind"] = "primary"
-                    assigns[0]["secondary_reason"] = ""
                     continue
 
                 if allow_multiple_primary_assignments:
@@ -1224,8 +1201,6 @@ class AnalyzeAction:
                         continue
                     if a.get("kind") == "primary":
                         a["kind"] = "secondary"
-                        if not str(a.get("secondary_reason") or "").strip():
-                            a["secondary_reason"] = "secondary_due_to_primary_conflict"
 
         # Attach consolidated rejected assignment lists to each kept assignment.
         for pid, assigns in combined.items():

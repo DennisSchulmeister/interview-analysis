@@ -483,7 +483,6 @@ The output is an OpenDocument Spreadsheet (`.ods`) with:
 	- Topic
 	- Orientation
 	- Role (primary/secondary)
-	- Secondary reason (keyword; only for secondary)
 	- Rationale (short; optional)
 	- Rejected assignments (short list; optional)
 	- Researcher decision (accepted/modified/rejected)

@@ -289,7 +289,6 @@ class WriteOutputAction:
                         rationale = a.get("rationale")
                         rejected_assignments = a.get("rejected_assignments")
                         kind = a.get("kind")
-                        secondary_reason = a.get("secondary_reason")
                         if not isinstance(topic, str) or not isinstance(evidence, str):
                             continue
 
@@ -306,9 +305,6 @@ class WriteOutputAction:
                         kind_norm = "primary"
                         if isinstance(kind, str) and kind.strip().lower() in {"secondary", "minor", "s"}:
                             kind_norm = "secondary"
-                        secondary_reason_norm = ""
-                        if kind_norm == "secondary" and isinstance(secondary_reason, str):
-                            secondary_reason_norm = " ".join(secondary_reason.split()).strip()
 
                         rationale_norm = ""
                         if isinstance(rationale, str):
@@ -345,7 +341,6 @@ class WriteOutputAction:
                                 "topic": topic_key,
                                 "orientation": orientation_bucket,
                                 "role": kind_norm,
-                                "secondary_reason": secondary_reason_norm,
                                 "rationale": rationale_norm,
                                 "rejected_assignments": rejected_norm,
                                 "researcher_decision": "",
@@ -567,7 +562,6 @@ class WriteOutputAction:
             header.append_cell(Cell(text=_xml_safe_text("Topic")))
             header.append_cell(Cell(text=_xml_safe_text("Orientation")))
             header.append_cell(Cell(text=_xml_safe_text("Role")))
-            header.append_cell(Cell(text=_xml_safe_text("Secondary Reason")))
             header.append_cell(Cell(text=_xml_safe_text("Rationale")))
             header.append_cell(Cell(text=_xml_safe_text("Rejected assignments")))
             header.append_cell(Cell(text=_xml_safe_text("Researcher Decision (accepted/modified/rejected)")))
@@ -585,7 +579,6 @@ class WriteOutputAction:
                     row.append_cell(Cell(text=_xml_safe_text(r.get("topic", ""))))
                     row.append_cell(Cell(text=_xml_safe_text(r.get("orientation", ""))))
                     row.append_cell(Cell(text=_xml_safe_text(r.get("role", ""))))
-                    row.append_cell(Cell(text=_xml_safe_text(r.get("secondary_reason", ""))))
                     row.append_cell(Cell(text=_xml_safe_text(r.get("rationale", ""))))
                     row.append_cell(Cell(text=_xml_safe_text(r.get("rejected_assignments", ""))))
                     row.append_cell(Cell(text=_xml_safe_text(r.get("researcher_decision", ""))))
