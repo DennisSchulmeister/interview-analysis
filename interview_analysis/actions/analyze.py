@@ -26,6 +26,7 @@ import yaml
 
 from interview_analysis.ai_llm import ai_conversation_json
 from interview_analysis.config import ConfigError, InterviewConfig
+from interview_analysis.yaml_io import read_yaml_mapping
 
 
 @dataclass(frozen=True)
@@ -105,7 +106,7 @@ class AnalyzeAction:
         analysis_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"Loading segmentation index: {segments_index}")
-        index = self._read_yaml(segments_index)
+        index = read_yaml_mapping(segments_index)
         documents = index.get("documents")
         if not isinstance(documents, list) or not documents:
             print("No documents found in segmentation index. Nothing to analyze.")
@@ -145,7 +146,7 @@ class AnalyzeAction:
                 continue
 
             print(f"[{doc_idx}/{total_docs}] Loading segments: {segments_path}")
-            seg_doc = self._read_yaml(segments_path)
+            seg_doc = read_yaml_mapping(segments_path)
 
             doc_id = seg_doc.get("document_id")
             if not isinstance(doc_id, str) or not doc_id.strip():
@@ -266,31 +267,6 @@ class AnalyzeAction:
             encoding="utf-8",
         )
         print(f"Wrote analysis index: {index_path}")
-
-    def _read_yaml(self, path: Path) -> dict[str, Any]:
-        """
-        Read a YAML file into a dictionary.
-
-        Args:
-            path:
-                YAML file path.
-
-        Returns:
-            Parsed YAML mapping.
-
-        Raises:
-            ConfigError:
-                If the file cannot be read or does not contain a mapping.
-        """
-
-        try:
-            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except Exception as exc:  # noqa: BLE001
-            raise ConfigError(f"Failed to read YAML file '{path}': {exc}") from exc
-
-        if not isinstance(raw, dict):
-            raise ConfigError(f"YAML file must contain a mapping: {path}")
-        return raw
 
     def _build_codebook(self, config: InterviewConfig) -> dict[str, Any]:
         """

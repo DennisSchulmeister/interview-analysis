@@ -22,8 +22,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from odfdo import Document
 from odfdo.cell import Cell
 from odfdo.row import Row
@@ -31,6 +29,7 @@ from odfdo.table import Table
 
 from interview_analysis.cli_io import is_interactive_tty, prompt_overwrite
 from interview_analysis.config import ConfigError, InterviewConfig
+from interview_analysis.yaml_io import read_yaml_mapping
 
 
 @dataclass(frozen=True)
@@ -106,7 +105,7 @@ class WriteOutputAction:
             )
 
         print(f"Loading analysis index: {analysis_index}")
-        index = self._read_yaml(analysis_index)
+        index = read_yaml_mapping(analysis_index)
         documents = index.get("documents")
         if not isinstance(documents, list) or not documents:
             print("No documents found in analysis index. Nothing to write.")
@@ -123,31 +122,6 @@ class WriteOutputAction:
         outfile.parent.mkdir(parents=True, exist_ok=True)
         doc.save(outfile)
         print(f"Wrote ODS report: {outfile}")
-
-    def _read_yaml(self, path: Path) -> dict[str, Any]:
-        """
-        Read a YAML file into a dictionary.
-
-        Args:
-            path:
-                YAML file path.
-
-        Returns:
-            Parsed YAML mapping.
-
-        Raises:
-            ConfigError:
-                If the file cannot be read or does not contain a mapping.
-        """
-
-        try:
-            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except Exception as exc:  # noqa: BLE001
-            raise ConfigError(f"Failed to read YAML file '{path}': {exc}") from exc
-
-        if not isinstance(raw, dict):
-            raise ConfigError(f"YAML file must contain a mapping: {path}")
-        return raw
 
     def _collect_rows(
         self,
@@ -180,7 +154,7 @@ class WriteOutputAction:
                 print(f"Skipping missing analysis file: {path}")
                 continue
 
-            analyzed = self._read_yaml(path)
+            analyzed = read_yaml_mapping(path)
             doc_id = analyzed.get("document_id")
             if not isinstance(doc_id, str) or not doc_id.strip():
                 print(f"Skipping analysis file without document_id: {path}")
