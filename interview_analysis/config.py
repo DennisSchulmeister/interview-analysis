@@ -78,6 +78,20 @@ class SegmentationConfig:
 
 
 @dataclass(frozen=True)
+class LlmGuidanceConfig:
+    """Optional flags that control LLM instructions.
+
+    These flags are intended to shape the *format and strictness* of the LLM
+    output, not to change the codebook semantics.
+    """
+
+    explain_assignments: bool = False
+    require_textual_evidence: bool = True
+    list_rejected_assignments: bool = False
+    default_to_conservative_orientation: bool = True
+
+
+@dataclass(frozen=True)
 class AnalysisConfig:
     """
     Configuration for the topic coding step.
@@ -110,6 +124,10 @@ class AnalysisConfig:
 
             This setting only has an effect when `allow_secondary_assignments`
             is True.
+
+            llm_guidance:
+                Optional per-run instruction flags that influence the LLM output.
+                Defaults are conservative to preserve existing behavior.
     """
 
     exclude_interviewer: bool = False
@@ -117,6 +135,7 @@ class AnalysisConfig:
     rules: list[str] = field(default_factory=list)
     allow_secondary_assignments: bool = False
     allow_multiple_primary_assignments: bool = True
+    llm_guidance: LlmGuidanceConfig = field(default_factory=LlmGuidanceConfig)
 
 
 @dataclass(frozen=True)
@@ -529,6 +548,7 @@ def _parse_analysis(value: Any) -> AnalysisConfig:
         "allow_multiple_primary_assignments",
         AnalysisConfig.allow_multiple_primary_assignments,
     )
+    llm_guidance_raw = value.get("llm_guidance", None)
 
     if not isinstance(exclude_interviewer, bool):
         raise ConfigError("analysis.exclude_interviewer must be a boolean")
@@ -538,6 +558,34 @@ def _parse_analysis(value: Any) -> AnalysisConfig:
         raise ConfigError("analysis.allow_secondary_assignments must be a boolean")
     if not isinstance(allow_multiple_primary, bool):
         raise ConfigError("analysis.allow_multiple_primary_assignments must be a boolean")
+
+    llm_guidance = LlmGuidanceConfig()
+    if llm_guidance_raw is None:
+        llm_guidance = LlmGuidanceConfig()
+    elif isinstance(llm_guidance_raw, dict):
+        def _get_bool(key: str, default: bool) -> bool:
+            v = llm_guidance_raw.get(key, default)
+            if not isinstance(v, bool):
+                raise ConfigError(f"analysis.llm_guidance.{key} must be a boolean")
+            return v
+
+        llm_guidance = LlmGuidanceConfig(
+            explain_assignments=_get_bool("explain_assignments", LlmGuidanceConfig.explain_assignments),
+            require_textual_evidence=_get_bool(
+                "require_textual_evidence",
+                LlmGuidanceConfig.require_textual_evidence,
+            ),
+            list_rejected_assignments=_get_bool(
+                "list_rejected_assignments",
+                LlmGuidanceConfig.list_rejected_assignments,
+            ),
+            default_to_conservative_orientation=_get_bool(
+                "default_to_conservative_orientation",
+                LlmGuidanceConfig.default_to_conservative_orientation,
+            ),
+        )
+    else:
+        raise ConfigError("analysis.llm_guidance must be a mapping if provided")
 
     strategy_norm = strategy.strip().lower()
     if strategy_norm not in {"segment", "topic"}:
@@ -565,4 +613,5 @@ def _parse_analysis(value: Any) -> AnalysisConfig:
         rules=rules,
         allow_secondary_assignments=allow_secondary,
         allow_multiple_primary_assignments=allow_multiple_primary,
+        llm_guidance=llm_guidance,
     )

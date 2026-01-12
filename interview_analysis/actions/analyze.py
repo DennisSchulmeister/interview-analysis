@@ -26,9 +26,12 @@ import yaml
 
 from interview_analysis.ai_llm import ai_conversation_json
 from interview_analysis.codebook import build_codebook, codebook_hash, orientations_by_topic
-from interview_analysis.config import ConfigError, InterviewConfig
+from interview_analysis.config import ConfigError, InterviewConfig, LlmGuidanceConfig
 from interview_analysis.hash_utils import md5_file, md5_text
 from interview_analysis.yaml_io import read_yaml_mapping
+
+
+ANALYSIS_OUTPUT_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -122,6 +125,16 @@ class AnalyzeAction:
         allow_multiple_primary = bool(
             getattr(config.analysis, "allow_multiple_primary_assignments", True)
         )
+        llm_guidance = getattr(config.analysis, "llm_guidance", None)
+        if not isinstance(llm_guidance, LlmGuidanceConfig):
+            llm_guidance = LlmGuidanceConfig()
+        guidance_dict: dict[str, Any] = {
+            "explain_assignments": bool(llm_guidance.explain_assignments),
+            "require_textual_evidence": bool(llm_guidance.require_textual_evidence),
+            "list_rejected_assignments": bool(llm_guidance.list_rejected_assignments),
+            "default_to_conservative_orientation": bool(llm_guidance.default_to_conservative_orientation),
+        }
+        guidance_hash = md5_text(yaml.safe_dump(guidance_dict, sort_keys=True))
         allowed_orientations = orientations_by_topic(codebook)
         orientation_policy = self._build_orientation_policy(config.topics)
         strategy = config.analysis.strategy
@@ -139,6 +152,8 @@ class AnalyzeAction:
                 "rules": rules,
                 "allow_secondary_assignments": allow_secondary,
                 "allow_multiple_primary_assignments": allow_multiple_primary,
+                "output_version": ANALYSIS_OUTPUT_VERSION,
+                "llm_guidance": guidance_dict,
             },
             "documents": [],
         }
@@ -174,10 +189,12 @@ class AnalyzeAction:
                     segments_md5=segments_md5,
                     codebook_hash=cb_hash,
                     rules_hash=rules_hash,
+                    guidance_hash=guidance_hash,
                     strategy=strategy,
                     exclude_interviewer=exclude_interviewer,
                     allow_secondary_assignments=allow_secondary,
                     allow_multiple_primary_assignments=allow_multiple_primary,
+                    analysis_output_version=ANALYSIS_OUTPUT_VERSION,
                 ):
                     existing_doc_id = existing.get("document_id")
                     doc_id = (
@@ -272,6 +289,7 @@ class AnalyzeAction:
                         coding_rules=rules,
                         allow_secondary_assignments=allow_secondary,
                         allow_multiple_primary_assignments=allow_multiple_primary,
+                        llm_guidance=guidance_dict,
                         exclude_interviewer=exclude_interviewer,
                         interviewer_labels=interviewers,
                     )
@@ -284,6 +302,7 @@ class AnalyzeAction:
                         coding_rules=rules,
                         allow_secondary_assignments=allow_secondary,
                         allow_multiple_primary_assignments=allow_multiple_primary,
+                        llm_guidance=guidance_dict,
                         exclude_interviewer=exclude_interviewer,
                         interviewer_labels=interviewers,
                     )
@@ -319,6 +338,7 @@ class AnalyzeAction:
                     "segments_md5": segments_md5,
                     "codebook_hash": cb_hash,
                     "rules_hash": rules_hash,
+                    "guidance_hash": guidance_hash,
                 },
                 "document_id": doc_id,
                 "source": seg_doc.get("source"),
@@ -329,6 +349,8 @@ class AnalyzeAction:
                     "rules": rules,
                     "allow_secondary_assignments": allow_secondary,
                     "allow_multiple_primary_assignments": allow_multiple_primary,
+                    "output_version": ANALYSIS_OUTPUT_VERSION,
+                    "llm_guidance": guidance_dict,
                 },
                 "codebook": codebook,
                 "segments": analyzed_segments,
@@ -363,10 +385,12 @@ class AnalyzeAction:
         segments_md5: str,
         codebook_hash: str,
         rules_hash: str,
+        guidance_hash: str,
         strategy: str,
         exclude_interviewer: bool,
         allow_secondary_assignments: bool,
         allow_multiple_primary_assignments: bool,
+        analysis_output_version: int,
     ) -> bool:
         """Return True if an existing analysis work file matches current inputs."""
 
@@ -393,6 +417,9 @@ class AnalyzeAction:
         if str(inp.get("rules_hash") or "") != rules_hash:
             return False
 
+        if str(inp.get("guidance_hash") or "") != guidance_hash:
+            return False
+
         analysis_cfg = existing.get("analysis")
         if not isinstance(analysis_cfg, dict):
             return False
@@ -410,6 +437,9 @@ class AnalyzeAction:
             bool(analysis_cfg.get("allow_multiple_primary_assignments", True))
             != allow_multiple_primary_assignments
         ):
+            return False
+
+        if int(analysis_cfg.get("output_version") or 0) != int(analysis_output_version):
             return False
 
         return True
@@ -549,6 +579,7 @@ class AnalyzeAction:
         *,
         exclude_interviewer: bool,
         interviewer_labels: list[str],
+        require_textual_evidence: bool = True,
         extra_instructions: list[str] | None = None,
     ) -> str:
         """
@@ -569,9 +600,11 @@ class AnalyzeAction:
         system_parts = [
             "You are assisting with a qualitative content coding task.",
             "Do not interpret or infer.",
-            "Only assign if there is explicit textual evidence.",
-            "Always quote the exact evidence text from the paragraph.",
         ]
+
+        if require_textual_evidence:
+            system_parts.append("Only assign if there is explicit textual evidence.")
+            system_parts.append("Always quote the exact evidence text from the paragraph.")
 
         if extra_instructions:
             system_parts.extend([x for x in extra_instructions if x.strip()])
@@ -622,6 +655,7 @@ class AnalyzeAction:
         coding_rules: list[str],
         allow_secondary_assignments: bool,
         allow_multiple_primary_assignments: bool,
+        llm_guidance: dict[str, Any],
         exclude_interviewer: bool,
         interviewer_labels: list[str],
     ) -> tuple[dict[str, list[dict[str, Any]]], list[str], list[str]]:
@@ -651,28 +685,45 @@ class AnalyzeAction:
         system = self._build_system_prompt(
             exclude_interviewer=exclude_interviewer,
             interviewer_labels=interviewer_labels,
+            require_textual_evidence=bool(llm_guidance.get("require_textual_evidence", True)),
             extra_instructions=extra,
         )
 
+        explain_assignments = bool(llm_guidance.get("explain_assignments", False))
+        list_rejected = bool(llm_guidance.get("list_rejected_assignments", False))
+        conservative_orientation = bool(llm_guidance.get("default_to_conservative_orientation", True))
+
+        task_parts = [
+            "For each paragraph where target=true, assign topics from the codebook.",
+            "If allow_secondary_assignments=false, assign at most one topic per paragraph (or none).",
+            "If allow_secondary_assignments=true, you may assign multiple topics per paragraph.",
+            "When allow_multiple_primary_assignments=false, assign exactly one primary topic per paragraph when any topic applies, and mark any additional topics as secondary.",
+            "When allow_multiple_primary_assignments=true, you may mark multiple topics as primary if they are equally central (e.g., very long statements).",
+            "Secondary topics must include a short keyword note explaining why they are secondary.",
+        ]
+        if explain_assignments:
+            task_parts.append(
+                "For each accepted assignment, provide a very brief rationale as a few keywords (no full sentences)."
+            )
+        if list_rejected:
+            task_parts.append(
+                "Additionally, for each paragraph include up to 5 considered-but-rejected assignments (topic + orientation if applicable)."
+            )
+        task_parts.append("For each assignment, if the topic defines orientations, choose exactly one allowed orientation.")
+        task_parts.append("If the topic has no orientations, set orientation to null (or an empty string).")
+        task_parts.append("Do not assign the same topic more than once per paragraph unless the codebook sets allow_multiple_orientations=true for that topic.")
+        if conservative_orientation:
+            task_parts.append("When allow_multiple_orientations=false, the orientations list is ordered from highest to lowest rank; if you are unsure, choose the single best (highest-ranked) match.")
+        task_parts.append("Use codebook topic/orientation descriptions (if present) as selection hints, but do not infer beyond the paragraph text.")
+        task_parts.append("Always provide an evidence quote that appears verbatim in the paragraph.")
+
         user_payload = {
             "segment_id": segment_id,
-            "task": (
-                "For each paragraph where target=true, assign topics from the codebook. "
-                "If allow_secondary_assignments=false, assign at most one topic per paragraph (or none). "
-                "If allow_secondary_assignments=true, you may assign multiple topics per paragraph. "
-                "When allow_multiple_primary_assignments=false, assign exactly one primary topic per paragraph when any topic applies, "
-                "and mark any additional topics as secondary. "
-                "When allow_multiple_primary_assignments=true, you may mark multiple topics as primary if they are equally central (e.g., very long statements). "
-                "Secondary topics must include a short keyword note explaining why they are secondary. "
-                "For each assignment, if the topic defines orientations, choose exactly one allowed orientation. "
-                "If the topic has no orientations, set orientation to null (or an empty string). "
-                "Do not assign the same topic more than once per paragraph unless the codebook sets allow_multiple_orientations=true for that topic. "
-                "When allow_multiple_orientations=false, the orientations list is ordered from highest to lowest rank; if you are unsure, choose the single best (highest-ranked) match. "
-                "Use codebook topic/orientation descriptions (if present) as selection hints, but do not infer beyond the paragraph text. "
-                "Always provide an evidence quote that appears verbatim in the paragraph."
-            ),
+            "task": " ".join(task_parts),
             "allow_secondary_assignments": allow_secondary_assignments,
             "allow_multiple_primary_assignments": allow_multiple_primary_assignments,
+            "llm_guidance": llm_guidance,
+            "max_rejected_assignments_per_paragraph": 5 if list_rejected else 0,
             "interviewer_labels": interviewer_labels if exclude_interviewer else [],
             "codebook": codebook,
             "paragraphs": [
@@ -693,12 +744,29 @@ class AnalyzeAction:
                                 "topic": "<topic name>",
                                 "orientation": "<one allowed orientation, or null if none>",
                                 "evidence": "<exact quote from the paragraph>",
+                                **(
+                                    {"rationale": "<short why-this-applies rationale>"}
+                                    if explain_assignments
+                                    else {}
+                                ),
                                 "kind": "<primary|secondary>",
                                 "secondary_reason": "<keyword if kind=secondary, else empty>",
                             }
                         ],
                     }
-                ]
+                ],
+                **(
+                    {
+                        "rejected_assignments": [
+                            {
+                                "topic": "<topic name>",
+                                "orientation": "<one allowed orientation, or null if none>",
+                            }
+                        ]
+                    }
+                    if list_rejected
+                    else {}
+                ),
             },
         }
 
@@ -724,6 +792,44 @@ class AnalyzeAction:
             assigns = item.get("assignments")
             if not isinstance(pid, str) or not isinstance(assigns, list):
                 continue
+
+            rejected_norm: list[dict[str, Any]] = []
+            rejected_raw = item.get("rejected_assignments")
+            if isinstance(rejected_raw, list):
+                for ra in rejected_raw:
+                    if not isinstance(ra, dict):
+                        continue
+                    rt = ra.get("topic")
+                    ro = ra.get("orientation")
+                    if not isinstance(rt, str) or not rt.strip():
+                        continue
+                    rt_key = rt.strip()
+                    allowed = allowed_orientations.get(rt_key, [])
+
+                    ro_norm = ""
+                    if isinstance(ro, str):
+                        ro_norm = ro.strip()
+                    elif ro is None:
+                        ro_norm = ""
+                    else:
+                        continue
+
+                    if allowed:
+                        if ro_norm and ro_norm not in allowed:
+                            continue
+                    else:
+                        ro_norm = ""
+
+                    rejected_norm.append(
+                        {
+                            "topic": rt_key,
+                            "orientation": ro_norm,
+                        }
+                    )
+
+                if len(rejected_norm) > 5:
+                    rejected_norm = rejected_norm[:5]
+
             normalized: list[dict[str, Any]] = []
             for a in assigns:
                 if not isinstance(a, dict):
@@ -731,6 +837,7 @@ class AnalyzeAction:
                 topic = a.get("topic")
                 orientation = a.get("orientation")
                 evidence = a.get("evidence")
+                rationale = a.get("rationale")
                 kind = a.get("kind")
                 secondary_reason = a.get("secondary_reason")
                 if not isinstance(topic, str) or not isinstance(evidence, str):
@@ -772,13 +879,23 @@ class AnalyzeAction:
                 else:
                     kind_norm = "primary"
 
+                rationale_norm = ""
+                if isinstance(rationale, str):
+                    rationale_norm = " ".join(rationale.split()).strip()
+                    # Keep rationale as a few keywords for spreadsheet usability.
+                    if rationale_norm:
+                        words = rationale_norm.split()
+                        rationale_norm = " ".join(words[:8])
+
                 normalized.append(
                     {
                         "topic": topic_key,
                         "orientation": orientation_norm,
                         "evidence": evidence,
+                        "rationale": rationale_norm,
                         "kind": kind_norm,
                         "secondary_reason": secondary_reason_norm,
+                        "rejected_assignments": rejected_norm,
                     }
                 )
 
@@ -827,6 +944,7 @@ class AnalyzeAction:
         coding_rules: list[str],
         allow_secondary_assignments: bool,
         allow_multiple_primary_assignments: bool,
+        llm_guidance: dict[str, Any],
         exclude_interviewer: bool,
         interviewer_labels: list[str],
     ) -> tuple[dict[str, list[dict[str, Any]]], list[str], list[str]]:
@@ -837,6 +955,7 @@ class AnalyzeAction:
             return {}, ["Invalid codebook: missing topics"], []
 
         combined: dict[str, list[dict[str, Any]]] = {}
+        rejected_by_pid: dict[str, list[dict[str, Any]]] = {}
         errors: list[str] = []
         warnings: list[str] = []
 
@@ -850,6 +969,7 @@ class AnalyzeAction:
         system = self._build_system_prompt(
             exclude_interviewer=exclude_interviewer,
             interviewer_labels=interviewer_labels,
+            require_textual_evidence=bool(llm_guidance.get("require_textual_evidence", True)),
             extra_instructions=extra,
         )
 
@@ -868,25 +988,40 @@ class AnalyzeAction:
             allowed_orientations[topic_name] = orientations_clean
 
             print(f"    * Topic: {topic_name}")
+            explain_assignments = bool(llm_guidance.get("explain_assignments", False))
+            list_rejected = bool(llm_guidance.get("list_rejected_assignments", False))
+            conservative_orientation = bool(llm_guidance.get("default_to_conservative_orientation", True))
+
+            task_parts = [
+                "For each paragraph where target=true, decide whether it explicitly addresses the given topic.",
+                "If allow_secondary_assignments=false, be conservative and do not assign this topic if another topic would be more central.",
+                "If allow_secondary_assignments=true, classify a match as primary if it is central to the statement, or secondary if it is only a minor mention.",
+                "When allow_multiple_primary_assignments=false, only one topic per paragraph should be primary overall; mark other topic matches as secondary.",
+                "When allow_multiple_primary_assignments=true, multiple topic matches may be marked as primary if they are equally central (e.g., very long statements).",
+                "Secondary matches must include a short keyword note explaining why they are secondary.",
+            ]
+            if explain_assignments:
+                task_parts.append(
+                    "For each accepted match, provide a very brief rationale as a few keywords (no full sentences)."
+                )
+            if list_rejected:
+                task_parts.append(
+                    "Additionally, include a 'rejected_assignments' list containing paragraph ids where this topic was considered but rejected (no rationale)."
+                )
+            task_parts.append("If yes and an orientations list is provided, select exactly one orientation from the allowed list.")
+            task_parts.append("If no orientations are provided, omit orientation (or set it to null).")
+            task_parts.append("Do not assign the same topic more than once per paragraph unless allow_multiple_orientations=true for that topic.")
+            if conservative_orientation:
+                task_parts.append("When allow_multiple_orientations=false, the orientations list is ordered from highest to lowest rank; if you are unsure, choose the single best (highest-ranked) match.")
+            task_parts.append("Use the topic description and orientation descriptions (if provided) as selection hints, but do not infer beyond the paragraph text.")
+            task_parts.append("Always provide an evidence quote that appears verbatim in the paragraph.")
+
             user_payload = {
                 "segment_id": segment_id,
-                "task": (
-                    "For each paragraph where target=true, decide whether it explicitly addresses the given topic. "
-                    "If allow_secondary_assignments=false, be conservative and do not assign this topic if another topic would be more central. "
-                    "If allow_secondary_assignments=true, classify a match as primary if it is central to the statement, or secondary if it is only a minor mention. "
-                    "When allow_multiple_primary_assignments=false, only one topic per paragraph should be primary overall; mark other topic matches as secondary. "
-                    "When allow_multiple_primary_assignments=true, multiple topic matches may be marked as primary if they are equally central (e.g., very long statements). "
-                    "Secondary matches must include a short keyword note explaining why they are secondary. "
-                    "If yes and an orientations list is provided, select exactly one orientation from the allowed list. "
-                    "If no orientations are provided, omit orientation (or set it to null). "
-                    "Do not assign the same topic more than once per paragraph unless allow_multiple_orientations=true for that topic. "
-                    "When allow_multiple_orientations=false, the orientations list is ordered from highest to lowest rank; if you are unsure, choose the single best (highest-ranked) match. "
-                    "Use the topic description and orientation descriptions (if provided) as selection hints, but do not infer beyond the paragraph text. "
-                    "Always provide an evidence quote "
-                    "that appears verbatim in the paragraph."
-                ),
+                "task": " ".join(task_parts),
                 "allow_secondary_assignments": allow_secondary_assignments,
                 "allow_multiple_primary_assignments": allow_multiple_primary_assignments,
+                "llm_guidance": llm_guidance,
                 "interviewer_labels": interviewer_labels if exclude_interviewer else [],
                 "topic": {
                     "topic": topic_name,
@@ -917,10 +1052,27 @@ class AnalyzeAction:
                             "paragraph_id": "<paragraph id>",
                             "orientation": "<one of the allowed orientations, or null if none>",
                             "evidence": "<exact quote from the paragraph>",
+                            **(
+                                {"rationale": "<short why-this-applies rationale>"}
+                                if explain_assignments
+                                else {}
+                            ),
                             "kind": "<primary|secondary>",
                             "secondary_reason": "<keyword if kind=secondary, else empty>",
                         }
-                    ]
+                    ],
+                    **(
+                        {
+                            "rejected_assignments": [
+                                {
+                                    "paragraph_id": "<paragraph id>",
+                                    "orientation": "<one of the allowed orientations, or null if none>",
+                                }
+                            ]
+                        }
+                        if list_rejected
+                        else {}
+                    ),
                 },
             }
 
@@ -935,12 +1087,45 @@ class AnalyzeAction:
                 errors.append(f"{topic_name}: missing matches list")
                 continue
 
+            rejected_raw = result.get("rejected_assignments")
+            if isinstance(rejected_raw, list):
+                for ra in rejected_raw:
+                    if not isinstance(ra, dict):
+                        continue
+                    pid = ra.get("paragraph_id")
+                    orientation = ra.get("orientation")
+                    if not isinstance(pid, str) or not pid.strip():
+                        continue
+
+                    orientation_norm = ""
+                    if isinstance(orientation, str):
+                        orientation_norm = orientation.strip()
+                    elif orientation is None:
+                        orientation_norm = ""
+                    else:
+                        continue
+
+                    allowed = allowed_orientations.get(topic_name, [])
+                    if allowed:
+                        if orientation_norm and orientation_norm not in allowed:
+                            continue
+                    else:
+                        orientation_norm = ""
+
+                    rejected_by_pid.setdefault(pid.strip(), []).append(
+                        {
+                            "topic": topic_name,
+                            "orientation": orientation_norm,
+                        }
+                    )
+
             for m in matches:
                 if not isinstance(m, dict):
                     continue
                 pid = m.get("paragraph_id")
                 orientation = m.get("orientation")
                 evidence = m.get("evidence")
+                rationale = m.get("rationale")
                 kind = m.get("kind")
                 secondary_reason = m.get("secondary_reason")
                 if not isinstance(pid, str) or not isinstance(evidence, str):
@@ -975,11 +1160,19 @@ class AnalyzeAction:
                 else:
                     kind_norm = "primary"
 
+                rationale_norm = ""
+                if isinstance(rationale, str):
+                    rationale_norm = " ".join(rationale.split()).strip()
+                    if rationale_norm:
+                        words = rationale_norm.split()
+                        rationale_norm = " ".join(words[:8])
+
                 combined.setdefault(pid, []).append(
                     {
                         "topic": topic_name,
                         "orientation": orientation_norm,
                         "evidence": evidence,
+                        "rationale": rationale_norm,
                         "kind": kind_norm,
                         "secondary_reason": secondary_reason_norm,
                     }
@@ -1020,6 +1213,17 @@ class AnalyzeAction:
                         a["kind"] = "secondary"
                         if not str(a.get("secondary_reason") or "").strip():
                             a["secondary_reason"] = "secondary_due_to_primary_conflict"
+
+        # Attach consolidated rejected assignment lists to each kept assignment.
+        for pid, assigns in combined.items():
+            rej = rejected_by_pid.get(pid, [])
+            if not isinstance(rej, list):
+                rej = []
+            if len(rej) > 5:
+                rej = rej[:5]
+            for a in assigns:
+                if isinstance(a, dict):
+                    a["rejected_assignments"] = rej
 
         return combined, errors, warnings
 

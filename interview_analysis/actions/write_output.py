@@ -251,6 +251,8 @@ class WriteOutputAction:
                         topic = a.get("topic")
                         orientation = a.get("orientation")
                         evidence = a.get("evidence")
+                        rationale = a.get("rationale")
+                        rejected_assignments = a.get("rejected_assignments")
                         kind = a.get("kind")
                         secondary_reason = a.get("secondary_reason")
                         if not isinstance(topic, str) or not isinstance(evidence, str):
@@ -272,6 +274,12 @@ class WriteOutputAction:
                         secondary_reason_norm = ""
                         if kind_norm == "secondary" and isinstance(secondary_reason, str):
                             secondary_reason_norm = " ".join(secondary_reason.split()).strip()
+
+                        rationale_norm = ""
+                        if isinstance(rationale, str):
+                            rationale_norm = " ".join(rationale.split()).strip()
+
+                        rejected_norm = self._format_rejected_assignments(rejected_assignments)
 
                         orientation_bucket = orientation_key if orientation_key else "(none)"
 
@@ -303,6 +311,10 @@ class WriteOutputAction:
                                 "orientation": orientation_bucket,
                                 "role": kind_norm,
                                 "secondary_reason": secondary_reason_norm,
+                                "rationale": rationale_norm,
+                                "rejected_assignments": rejected_norm,
+                                "researcher_decision": "",
+                                "researcher_comment": "",
                                 "where_found": where_found,
                                 "evidence": evidence,
                                 "paragraph_index": para_index,
@@ -520,7 +532,11 @@ class WriteOutputAction:
             header.append_cell(Cell(text="Topic"))
             header.append_cell(Cell(text="Orientation"))
             header.append_cell(Cell(text="Role"))
-            header.append_cell(Cell(text="Secondary reason"))
+            header.append_cell(Cell(text="Secondary Reason"))
+            header.append_cell(Cell(text="Rationale"))
+            header.append_cell(Cell(text="Rejected assignments"))
+            header.append_cell(Cell(text="Researcher Decision (accepted/modified/rejected)"))
+            header.append_cell(Cell(text="Researcher Comment"))
             header.append_cell(Cell(text="Where Found"))
             header.append_cell(Cell(text="Evidence Quote"))
             table.append_row(header)
@@ -535,6 +551,10 @@ class WriteOutputAction:
                     row.append_cell(Cell(text=str(r.get("orientation", ""))))
                     row.append_cell(Cell(text=str(r.get("role", ""))))
                     row.append_cell(Cell(text=str(r.get("secondary_reason", ""))))
+                    row.append_cell(Cell(text=str(r.get("rationale", ""))))
+                    row.append_cell(Cell(text=str(r.get("rejected_assignments", ""))))
+                    row.append_cell(Cell(text=str(r.get("researcher_decision", ""))))
+                    row.append_cell(Cell(text=str(r.get("researcher_comment", ""))))
                     row.append_cell(Cell(text=str(r.get("where_found", ""))))
                     row.append_cell(Cell(text=str(r.get("evidence", ""))))
                     table.append_row(row)
@@ -626,6 +646,36 @@ class WriteOutputAction:
 
         # Fallback: strip everything up to the last colon.
         return para_id.rsplit(":", 1)[-1]
+
+    def _format_rejected_assignments(self, value: Any) -> str:
+        """Format rejected assignments list for a single spreadsheet cell."""
+
+        if not isinstance(value, list) or not value:
+            return ""
+
+        parts: list[str] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            topic = item.get("topic")
+            orientation = item.get("orientation")
+            if not isinstance(topic, str) or not topic.strip():
+                continue
+
+            topic_key = topic.strip()
+            orientation_key = ""
+            if isinstance(orientation, str) and orientation.strip():
+                orientation_key = orientation.strip()
+
+            label = topic_key
+            if orientation_key:
+                label = f"{label} ({orientation_key})"
+            parts.append(label)
+
+            if len(parts) >= 5:
+                break
+
+        return " | ".join(parts)
 
     def _unique_sheet_name(self, name: str, used: set[str]) -> str:
         """

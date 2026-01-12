@@ -106,6 +106,68 @@ validated by researchers (e.g., spot checks, review of the per-transcript eviden
 refinement of codebook definitions). The intermediate work files and the `.ods` track record are
 intended to make such review feasible.
 
+### LLM-assisted coding with retained human accountability
+
+This tool is intended for a **computer-assisted first-cycle coding** workflow with **full auditability**.
+It is *not* meant as an automated qualitative analysis pipeline.
+
+In practice, the LLM acts as a **provisional first-cycle coder** under strict deductive constraints:
+
+* The codebook (topics and optional orientations) is defined up front.
+* The LLM proposes topic/orientation assignments for each statement and provides an evidence quote.
+* The researcher then **reviews every assignment** and records the final decision.
+
+Human accountability is retained by design:
+
+* The `.ods` output includes two explicit review columns:
+	- **Researcher decision (accepted/modified/rejected)**
+	- **Researcher comment**
+* LLM suggestions are **not removed** when rejected; the rejection is documented in these columns.
+* The intermediate YAML work files and the per-transcript evidence sheets provide an audit trail of
+	what the model suggested, where it was found, and what the researcher decided.
+
+A suitable methodology description for a paper can be phrased along these lines:
+
+> The language model was used to generate initial, deductive code assignments based strictly on a
+> predefined codebook. All assignments were subsequently reviewed, corrected, or rejected by the
+> researcher, who remained solely responsible for the final coding and interpretation.
+
+This explicitly separates *pattern recognition* (LLM assistance) from *interpretive authority*
+(researcher responsibility).
+
+Example configuration for a conservative, revision-ready coding setup:
+
+```yaml
+analysis:
+	# Strategy for LLM calls: segment or topic
+	strategy: segment
+
+	exclude_interviewer: true
+	allow_secondary_assignments: false
+	allow_multiple_primary_assignments: true
+
+	# Procedural guidance for hybrid LLM–human coding
+	llm_guidance:
+		explain_assignments: true
+		require_textual_evidence: true
+		list_rejected_assignments: true
+		default_to_conservative_orientation: true
+
+	rules:
+		- Code only statements made by students; ignore interviewer prompts, paraphrases, or confirmations.
+		- Assign a topic only if the statement contains an explicit or clearly inferable evaluative judgment related to that topic.
+		- Prefer the most specific topic available; do not assign multiple topics if one clearly dominates the meaning of the segment.
+		- Base coding strictly on the expressed perception or experience of the student, not on assumed intentions of lecturers or researchers.
+		- When orientations form an ordered scale, select the highest-ranked orientation only if it is explicitly and unambiguously supported by the statement.
+		- Prefer lower-ranked or mixed orientations when statements are hedged, tentative, indirect, or internally inconsistent.
+		- Do not resolve ambiguity through inference; preserve ambiguity in the coding where it exists in the data.
+		- Absence of praise or critique must not be interpreted as balance or neutrality.
+		- Do not infer outcomes, effects, or motivations that are not explicitly mentioned or strongly implied by the student.
+		- If a statement references multiple examples with different valences, code according to the dominant emphasis expressed by the student.
+		- Provide a brief keyword rationale and at least one piece of textual evidence for each assigned topic and orientation.
+		- Explicitly list alternative topic/orientation candidates that were considered but rejected.
+```
+
 Important Commands
 ------------------
 
@@ -332,6 +394,13 @@ Optional sections:
 	- if `true`, the model may mark multiple topic matches as `primary` for the same statement (useful for very long statements)
 	- if `false`, exactly one primary is kept per statement; additional primaries are downgraded to `secondary` with a keyword reason
 
+* `analysis.llm_guidance` (mapping, optional)
+	- optional flags to tune *how* the LLM explains and reports decisions
+	- `explain_assignments` (bool, default: false): include a very short keyword-style rationale per accepted assignment
+	- `require_textual_evidence` (bool, default: true): keep the strict “explicit textual evidence only” rule in the system prompt
+	- `list_rejected_assignments` (bool, default: false): include a short list of considered-but-rejected assignments (topic/orientation only)
+	- `default_to_conservative_orientation` (bool, default: true): when unsure, prefer the highest-ranked configured orientation (highest → lowest)
+
 ### topics (codebook)
 
 Each entry in `topics` can be written in one of these formats:
@@ -411,6 +480,10 @@ The output is an OpenDocument Spreadsheet (`.ods`) with:
 	- Orientation
 	- Role (primary/secondary)
 	- Secondary reason (keyword; only for secondary)
+	- Rationale (short; optional)
+	- Rejected assignments (short list; optional)
+	- Researcher decision (accepted/modified/rejected)
+	- Researcher comment
 	- Where Found (paragraph identifier; transcript is implied by the sheet)
 	- Evidence Quote
 

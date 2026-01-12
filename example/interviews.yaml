@@ -13,12 +13,31 @@ segmentation:
   overlap_paragraphs: 3
 
 analysis:
-  exclude_interviewer: true
   strategy: segment
-  rules:
-    - "Statements about how a method will be used in the future are coded under Future intentions, not Implementation approach."
+
+  exclude_interviewer: true
   allow_secondary_assignments: true
   allow_multiple_primary_assignments: true
+
+  llm_guidance:
+    explain_assignments: true
+    require_textual_evidence: true
+    list_rejected_assignments: true
+    default_to_conservative_orientation: true
+
+  rules:
+    # Specific rule for slightly ambiguous codes
+    - "Statements about how a method will be used in the future are coded under Future intentions, not Implementation approach."
+
+    # General coding rules (adopted to the lecturer interview use case)
+    - Code only statements made by lecturers; ignore interviewer prompts, paraphrases, or confirmations.
+    - Assign a topic only if the statement contains an explicit or clearly inferable evaluative judgment related to that topic.
+    - Prefer the most specific topic available; do not assign multiple topics if one clearly dominates the meaning of the segment.
+    - Base coding on the expressed perception or experience of the lecturer, not on assumed intentions of students or researchers.
+    - When orientations form an ordered scale, select the highest-ranked orientation that is clearly supported by the statement.
+    - "Avoid over-interpretation: if a judgment is vague, hedged, or indirect, select a lower-ranked or mixed orientation rather than a clear one."
+    - Do not infer outcomes, effects, or motivations that are not explicitly mentioned or strongly implied by the lecturer.
+    - If a statement references multiple examples with different valences, code according to the overall emphasis or dominant evaluation.
 
 topics:
   - topic: Prior teaching experience
