@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "interview_analysis"
+version = "1.0.0"
+description = "Interview Analysis Tool"
+authors = ["Dennis Schulmeister-Zimolong <dennis@wpvs.de>"]
+homepage = "https://dashboard.kollaborative-lehre.de"
+repository = "https://github.com/DennisSchulmeister/interview-analysis"
+license = "BSD-3-Clause"
+readme = "README.md"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+app = "interview_analysis.app:main"
+
+[tool.poetry.dependencies]
+python = ">=3.13,<4"
+python-dotenv = "^1.0.1"
+openai = "^2.15.0"
+odfdo = "^3.19.0"
+PyYAML = "^6.0.3"

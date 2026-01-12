@@ -1,0 +1,29 @@
+# Recursive grep pattern for transcript files to include/exclude
+include: "**.odt"
+exclude: "private/**"
+
+# Working directory for intermediate files
+workdir: ./work
+
+# Final output file
+outfile: results.ods
+
+# Segmentation options (optional; defaults shown)
+# segmentation:
+#   segment_paragraphs: 12
+#   overlap_paragraphs: 3
+
+# Topics and possible orientations for each topic
+topics:
+  - Perceived lecturer motivations for participation:
+      - Clear / plausible
+      - Mixed / ambiguous
+      - Unclear or questioned
+  - Offered participation opportunities:
+      - Limited / selective
+      - Moderate
+      - Extensive
+  - Clarity and transparency of participation offers:
+      - Clear
+      - Partially clear
+      - Unclear
