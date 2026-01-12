@@ -33,6 +33,41 @@ from interview_analysis.config import ConfigError, InterviewConfig
 from interview_analysis.yaml_io import read_yaml_mapping
 
 
+_XML_ILLEGAL_CHARS_RE = re.compile(
+    # XML 1.0 disallows most C0 control chars except TAB, LF, CR.
+    r"[\x00-\x08\x0B\x0C\x0E-\x1F]"
+    # Surrogates are never valid Unicode scalar values.
+    r"|[\uD800-\uDFFF]"
+    # Noncharacters.
+    r"|[\uFFFE\uFFFF]"
+)
+
+
+def _xml_safe_text(value: Any) -> str:
+    """Return a string that is safe to embed in XML/ODS.
+
+    lxml (used by odfdo) rejects NULL bytes and some control characters.
+    We strip these characters to ensure report generation cannot abort on
+    real-world transcripts.
+    """
+
+    if value is None:
+        return ""
+
+    if isinstance(value, bytes):
+        try:
+            text = value.decode("utf-8", errors="replace")
+        except Exception:
+            text = str(value)
+    else:
+        text = str(value)
+
+    if not text:
+        return ""
+
+    return _XML_ILLEGAL_CHARS_RE.sub("", text)
+
+
 @dataclass(frozen=True)
 class WriteOutputAction:
     """
@@ -489,18 +524,18 @@ class WriteOutputAction:
         table = Table("Summary")
 
         header = Row()
-        header.append_cell(Cell(text="Topic"))
-        header.append_cell(Cell(text="Orientation"))
-        header.append_cell(Cell(text="Count"))
-        header.append_cell(Cell(text="Example quote"))
+        header.append_cell(Cell(text=_xml_safe_text("Topic")))
+        header.append_cell(Cell(text=_xml_safe_text("Orientation")))
+        header.append_cell(Cell(text=_xml_safe_text("Count")))
+        header.append_cell(Cell(text=_xml_safe_text("Example quote")))
         table.append_row(header)
 
         for r in rows:
             row = Row()
-            row.append_cell(Cell(text=str(r.get("topic", ""))))
-            row.append_cell(Cell(text=str(r.get("orientation", ""))))
+            row.append_cell(Cell(text=_xml_safe_text(r.get("topic", ""))))
+            row.append_cell(Cell(text=_xml_safe_text(r.get("orientation", ""))))
             row.append_cell(Cell(value=int(r.get("count", 0))))
-            row.append_cell(Cell(text=str(r.get("example_quote", ""))))
+            row.append_cell(Cell(text=_xml_safe_text(r.get("example_quote", ""))))
             table.append_row(row)
 
         doc.body.append(table)
@@ -529,16 +564,16 @@ class WriteOutputAction:
             table = Table(name)
 
             header = Row()
-            header.append_cell(Cell(text="Topic"))
-            header.append_cell(Cell(text="Orientation"))
-            header.append_cell(Cell(text="Role"))
-            header.append_cell(Cell(text="Secondary Reason"))
-            header.append_cell(Cell(text="Rationale"))
-            header.append_cell(Cell(text="Rejected assignments"))
-            header.append_cell(Cell(text="Researcher Decision (accepted/modified/rejected)"))
-            header.append_cell(Cell(text="Researcher Comment"))
-            header.append_cell(Cell(text="Where Found"))
-            header.append_cell(Cell(text="Evidence Quote"))
+            header.append_cell(Cell(text=_xml_safe_text("Topic")))
+            header.append_cell(Cell(text=_xml_safe_text("Orientation")))
+            header.append_cell(Cell(text=_xml_safe_text("Role")))
+            header.append_cell(Cell(text=_xml_safe_text("Secondary Reason")))
+            header.append_cell(Cell(text=_xml_safe_text("Rationale")))
+            header.append_cell(Cell(text=_xml_safe_text("Rejected assignments")))
+            header.append_cell(Cell(text=_xml_safe_text("Researcher Decision (accepted/modified/rejected)")))
+            header.append_cell(Cell(text=_xml_safe_text("Researcher Comment")))
+            header.append_cell(Cell(text=_xml_safe_text("Where Found")))
+            header.append_cell(Cell(text=_xml_safe_text("Evidence Quote")))
             table.append_row(header)
 
             rows = entry.get("rows")
@@ -547,16 +582,16 @@ class WriteOutputAction:
                     if not isinstance(r, dict):
                         continue
                     row = Row()
-                    row.append_cell(Cell(text=str(r.get("topic", ""))))
-                    row.append_cell(Cell(text=str(r.get("orientation", ""))))
-                    row.append_cell(Cell(text=str(r.get("role", ""))))
-                    row.append_cell(Cell(text=str(r.get("secondary_reason", ""))))
-                    row.append_cell(Cell(text=str(r.get("rationale", ""))))
-                    row.append_cell(Cell(text=str(r.get("rejected_assignments", ""))))
-                    row.append_cell(Cell(text=str(r.get("researcher_decision", ""))))
-                    row.append_cell(Cell(text=str(r.get("researcher_comment", ""))))
-                    row.append_cell(Cell(text=str(r.get("where_found", ""))))
-                    row.append_cell(Cell(text=str(r.get("evidence", ""))))
+                    row.append_cell(Cell(text=_xml_safe_text(r.get("topic", ""))))
+                    row.append_cell(Cell(text=_xml_safe_text(r.get("orientation", ""))))
+                    row.append_cell(Cell(text=_xml_safe_text(r.get("role", ""))))
+                    row.append_cell(Cell(text=_xml_safe_text(r.get("secondary_reason", ""))))
+                    row.append_cell(Cell(text=_xml_safe_text(r.get("rationale", ""))))
+                    row.append_cell(Cell(text=_xml_safe_text(r.get("rejected_assignments", ""))))
+                    row.append_cell(Cell(text=_xml_safe_text(r.get("researcher_decision", ""))))
+                    row.append_cell(Cell(text=_xml_safe_text(r.get("researcher_comment", ""))))
+                    row.append_cell(Cell(text=_xml_safe_text(r.get("where_found", ""))))
+                    row.append_cell(Cell(text=_xml_safe_text(r.get("evidence", ""))))
                     table.append_row(row)
 
             doc.body.append(table)
@@ -569,6 +604,8 @@ class WriteOutputAction:
         """
 
         base = str(display_id or "Transcript").strip() or "Transcript"
+        base = _xml_safe_text(base)
+        base = base.replace("\n", " ").replace("\r", " ")
         base = base.replace("/", "_").replace("\\", "_")
         return base[:31]
 
@@ -670,12 +707,12 @@ class WriteOutputAction:
             label = topic_key
             if orientation_key:
                 label = f"{label} ({orientation_key})"
-            parts.append(label)
+            parts.append(_xml_safe_text(label))
 
             if len(parts) >= 5:
                 break
 
-        return " | ".join(parts)
+        return _xml_safe_text(" | ".join(parts))
 
     def _unique_sheet_name(self, name: str, used: set[str]) -> str:
         """
@@ -691,7 +728,8 @@ class WriteOutputAction:
             A unique name.
         """
 
-        candidate = name[:31]
+        candidate = _xml_safe_text(name)
+        candidate = candidate.replace("\n", " ").replace("\r", " ")[:31]
         if candidate not in used:
             return candidate
 
