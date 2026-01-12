@@ -161,8 +161,8 @@ class WriteOutputAction:
             codebook_topics=config.topics,
         )
 
-        self._append_summary_sheet(doc, summary_rows)
-        self._append_transcript_sheets(doc, per_doc_rows)
+        self._append_summary_sheet(doc, summary_rows, config=config)
+        self._append_transcript_sheets(doc, per_doc_rows, config=config)
 
         outfile.parent.mkdir(parents=True, exist_ok=True)
         doc.save(outfile)
@@ -501,7 +501,13 @@ class WriteOutputAction:
             return p
         return (base_dir / p).resolve()
 
-    def _append_summary_sheet(self, doc: Document, rows: list[dict[str, Any]]) -> None:
+    def _append_summary_sheet(
+        self,
+        doc: Document,
+        rows: list[dict[str, Any]],
+        *,
+        config: InterviewConfig,
+    ) -> None:
         """
         Add the summary sheet to the ODS document.
 
@@ -518,24 +524,41 @@ class WriteOutputAction:
         print("Writing sheet: Summary")
         table = Table("Summary")
 
+        require_evidence = bool(getattr(getattr(config.analysis, "llm_guidance", None), "require_textual_evidence", True))
+
+        # Keep the Summary sheet stable, but drop the example quote column when
+        # textual evidence is not required/desired.
+        columns: list[tuple[str, str]] = [
+            ("topic", "Topic"),
+            ("orientation", "Orientation"),
+            ("count", "Count"),
+        ]
+        if require_evidence:
+            columns.append(("example_quote", "Example quote"))
+
         header = Row()
-        header.append_cell(Cell(text=_xml_safe_text("Topic")))
-        header.append_cell(Cell(text=_xml_safe_text("Orientation")))
-        header.append_cell(Cell(text=_xml_safe_text("Count")))
-        header.append_cell(Cell(text=_xml_safe_text("Example quote")))
+        for _key, title in columns:
+            header.append_cell(Cell(text=_xml_safe_text(title)))
         table.append_row(header)
 
         for r in rows:
             row = Row()
-            row.append_cell(Cell(text=_xml_safe_text(r.get("topic", ""))))
-            row.append_cell(Cell(text=_xml_safe_text(r.get("orientation", ""))))
-            row.append_cell(Cell(value=int(r.get("count", 0))))
-            row.append_cell(Cell(text=_xml_safe_text(r.get("example_quote", ""))))
+            for key, _title in columns:
+                if key == "count":
+                    row.append_cell(Cell(value=int(r.get("count", 0))))
+                else:
+                    row.append_cell(Cell(text=_xml_safe_text(r.get(key, ""))))
             table.append_row(row)
 
         doc.body.append(table)
 
-    def _append_transcript_sheets(self, doc: Document, per_doc: list[dict[str, Any]]) -> None:
+    def _append_transcript_sheets(
+        self,
+        doc: Document,
+        per_doc: list[dict[str, Any]],
+        *,
+        config: InterviewConfig,
+    ) -> None:
         """
         Add one sheet per transcript with the full evidence track record.
 
@@ -550,6 +573,35 @@ class WriteOutputAction:
         """
 
         used_names: set[str] = {"Summary"}
+
+        allow_secondary = bool(getattr(config.analysis, "allow_secondary_assignments", False))
+        llm_guidance = getattr(config.analysis, "llm_guidance", None)
+        explain_assignments = bool(getattr(llm_guidance, "explain_assignments", False))
+        list_rejected = bool(getattr(llm_guidance, "list_rejected_assignments", False))
+        require_evidence = bool(getattr(llm_guidance, "require_textual_evidence", True))
+
+        # Only include columns that are enabled by the corresponding YAML settings.
+        # The two researcher review columns are always present by design.
+        columns: list[tuple[str, str]] = [
+            ("topic", "Topic"),
+            ("orientation", "Orientation"),
+        ]
+        if allow_secondary:
+            columns.append(("role", "Role"))
+        if explain_assignments:
+            columns.append(("rationale", "Rationale"))
+        if list_rejected:
+            columns.append(("rejected_assignments", "Rejected Assignments"))
+        columns.extend(
+            [
+                ("researcher_decision", "Researcher Decision (accepted/modified/rejected)"),
+                ("researcher_comment", "Researcher Comment"),
+                ("where_found", "Where Found"),
+            ]
+        )
+        if require_evidence:
+            columns.append(("evidence", "Evidence Quote"))
+
         for entry in per_doc:
             name = str(entry.get("sheet_name") or "Transcript")
             name = self._unique_sheet_name(name, used_names)
@@ -559,15 +611,8 @@ class WriteOutputAction:
             table = Table(name)
 
             header = Row()
-            header.append_cell(Cell(text=_xml_safe_text("Topic")))
-            header.append_cell(Cell(text=_xml_safe_text("Orientation")))
-            header.append_cell(Cell(text=_xml_safe_text("Role")))
-            header.append_cell(Cell(text=_xml_safe_text("Rationale")))
-            header.append_cell(Cell(text=_xml_safe_text("Rejected assignments")))
-            header.append_cell(Cell(text=_xml_safe_text("Researcher Decision (accepted/modified/rejected)")))
-            header.append_cell(Cell(text=_xml_safe_text("Researcher Comment")))
-            header.append_cell(Cell(text=_xml_safe_text("Where Found")))
-            header.append_cell(Cell(text=_xml_safe_text("Evidence Quote")))
+            for _key, title in columns:
+                header.append_cell(Cell(text=_xml_safe_text(title)))
             table.append_row(header)
 
             rows = entry.get("rows")
@@ -576,15 +621,8 @@ class WriteOutputAction:
                     if not isinstance(r, dict):
                         continue
                     row = Row()
-                    row.append_cell(Cell(text=_xml_safe_text(r.get("topic", ""))))
-                    row.append_cell(Cell(text=_xml_safe_text(r.get("orientation", ""))))
-                    row.append_cell(Cell(text=_xml_safe_text(r.get("role", ""))))
-                    row.append_cell(Cell(text=_xml_safe_text(r.get("rationale", ""))))
-                    row.append_cell(Cell(text=_xml_safe_text(r.get("rejected_assignments", ""))))
-                    row.append_cell(Cell(text=_xml_safe_text(r.get("researcher_decision", ""))))
-                    row.append_cell(Cell(text=_xml_safe_text(r.get("researcher_comment", ""))))
-                    row.append_cell(Cell(text=_xml_safe_text(r.get("where_found", ""))))
-                    row.append_cell(Cell(text=_xml_safe_text(r.get("evidence", ""))))
+                    for key, _title in columns:
+                        row.append_cell(Cell(text=_xml_safe_text(r.get(key, ""))))
                     table.append_row(row)
 
             doc.body.append(table)
