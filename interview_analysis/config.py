@@ -54,6 +54,26 @@ class SegmentationConfig:
 
 
 @dataclass(frozen=True)
+class AnalysisConfig:
+    """
+    Configuration for the topic coding step.
+
+    Attributes:
+        exclude_interviewer:
+            If True, statements attributed to the interviewer are excluded from
+            coding. Interviewer labels are detected from a metadata paragraph in
+            the transcript like `interviewer = Name1, Name2`.
+        strategy:
+            Analysis strategy. Supported values:
+                - `segment`: single LLM call per segment with full codebook
+                - `topic`: multiple LLM calls per segment, one per topic
+    """
+
+    exclude_interviewer: bool = False
+    strategy: str = "segment"
+
+
+@dataclass(frozen=True)
 class InterviewConfig:
     """
     Parsed configuration for an interview analysis run.
@@ -75,6 +95,8 @@ class InterviewConfig:
             List of topics and their allowed orientations.
         segmentation:
             Settings used by the segmentation step.
+        analysis:
+            Settings used by the analysis (coding) step.
     """
 
     config_path: Path
@@ -85,6 +107,7 @@ class InterviewConfig:
     outfile: Path
     topics: list[TopicSpec]
     segmentation: SegmentationConfig
+    analysis: AnalysisConfig
 
 
 class ConfigError(RuntimeError):
@@ -180,7 +203,7 @@ def load_config(path: Path) -> InterviewConfig:
     if not path.exists():
         raise ConfigError(
             "No interviews.yaml found in current directory and no --config provided. "
-            "Use --write-template to create one or pass --config PATH."
+            "Use the 'template' command to create one or pass --config PATH."
         )
     if not path.is_file():
         raise ConfigError(f"Config path is not a file: {path}")
@@ -217,6 +240,8 @@ def load_config(path: Path) -> InterviewConfig:
 
     segmentation = _parse_segmentation(raw.get("segmentation"))
 
+    analysis = _parse_analysis(raw.get("analysis"))
+
     # Interpret workdir/outfile and glob patterns relative to config file location.
     base_dir = path.parent.resolve()
     workdir_path = (base_dir / workdir).resolve()
@@ -231,6 +256,7 @@ def load_config(path: Path) -> InterviewConfig:
         outfile=outfile_path,
         topics=topics,
         segmentation=segmentation,
+        analysis=analysis,
     )
 
 
@@ -276,4 +302,44 @@ def _parse_segmentation(value: Any) -> SegmentationConfig:
     return SegmentationConfig(
         segment_paragraphs=segment_paragraphs,
         overlap_paragraphs=overlap_paragraphs,
+    )
+
+
+def _parse_analysis(value: Any) -> AnalysisConfig:
+    """
+    Parse and validate the optional `analysis` section.
+
+    Args:
+        value:
+            Raw YAML value for the `analysis` key.
+
+    Returns:
+        An AnalysisConfig instance (with defaults if section is missing).
+
+    Raises:
+        ConfigError:
+            If the section exists but is not valid.
+    """
+
+    if value is None:
+        return AnalysisConfig()
+
+    if not isinstance(value, dict):
+        raise ConfigError("'analysis' must be a mapping if provided")
+
+    exclude_interviewer = value.get("exclude_interviewer", AnalysisConfig.exclude_interviewer)
+    strategy = value.get("strategy", AnalysisConfig.strategy)
+
+    if not isinstance(exclude_interviewer, bool):
+        raise ConfigError("analysis.exclude_interviewer must be a boolean")
+    if not isinstance(strategy, str) or not strategy.strip():
+        raise ConfigError("analysis.strategy must be a non-empty string")
+
+    strategy_norm = strategy.strip().lower()
+    if strategy_norm not in {"segment", "topic"}:
+        raise ConfigError("analysis.strategy must be either 'segment' or 'topic'")
+
+    return AnalysisConfig(
+        exclude_interviewer=exclude_interviewer,
+        strategy=strategy_norm,
     )
