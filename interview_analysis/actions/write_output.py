@@ -21,15 +21,20 @@ import argparse
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from odfdo import Document
 from odfdo.cell import Cell
 from odfdo.row import Row
 from odfdo.table import Table
+from odfdo.style import Style
+from odfdo.column import Column
+from odfdo.element import Element
+from odfdo.config_elements import ConfigItem, ConfigItemMapEntry
 
 from interview_analysis.cli_io import is_interactive_tty, prompt_overwrite
 from interview_analysis.config import ConfigError, InterviewConfig
+from interview_analysis.hash_utils import md5_text
 from interview_analysis.yaml_io import read_yaml_mapping
 
 
@@ -66,6 +71,173 @@ def _xml_safe_text(value: Any) -> str:
         return ""
 
     return _XML_ILLEGAL_CHARS_RE.sub("", text)
+
+
+def _make_style_name(prefix: str, scope: str, *, suffix: str = "") -> str:
+    """Return a stable, ODF-friendly style name.
+
+    Some spreadsheet viewers are picky about style names; keep them ASCII-ish
+    and deterministic.
+    """
+
+    scope_key = re.sub(r"[^A-Za-z0-9_]", "_", scope or "")
+    scope_key = scope_key.strip("_")[:40] or "x"
+    digest = md5_text(scope)[:8]
+    if suffix:
+        suffix = re.sub(r"[^A-Za-z0-9_]", "_", suffix)
+    parts = [prefix, scope_key, digest]
+    if suffix:
+        parts.append(suffix)
+    return "_".join(p for p in parts if p)
+
+
+def _insert_automatic_style(doc: Document, style: Style | None) -> Style | None:
+    """Insert style into document automatic-styles so viewers can apply it."""
+
+    if style is None:
+        return None
+    try:
+        doc.insert_style(style, automatic=True)
+        return style
+    except Exception:
+        return None
+
+
+def _set_config_item(entry: Element, *, name: str, config_type: str, value: str | int | bool) -> None:
+    existing = None
+    for item in entry.get_elements("config:config-item"):
+        if isinstance(item, ConfigItem) and item.name == name:
+            existing = item
+            break
+    if existing is None:
+        existing = ConfigItem(name=name, config_type=config_type, value=value)
+        entry.append(existing)
+    else:
+        existing.config_type = config_type
+        existing.value = value
+
+
+def _freeze_first_row_in_settings(doc: Document) -> None:
+    """Best-effort: configure view settings to freeze the first row in each sheet.
+
+    LibreOffice/Calc stores freeze pane configuration in settings.xml under
+    ooo:view-settings -> Views -> Tables.
+    """
+
+    try:
+        table_names = [t.name for t in doc.body.tables if getattr(t, "name", None)]
+        if not table_names:
+            return
+
+        settings = doc.settings
+        view_settings = settings.get_element(
+            '//config:config-item-set[@config:name="ooo:view-settings"]'
+        )
+        if view_settings is None:
+            return
+
+        views = view_settings.get_element(
+            'config:config-item-map-indexed[@config:name="Views"]'
+        )
+        if views is None:
+            return
+
+        view_entry = views.get_element("config:config-item-map-entry")
+        if view_entry is None:
+            return
+
+        tables_map = view_entry.get_element(
+            'config:config-item-map-named[@config:name="Tables"]'
+        )
+        if tables_map is None:
+            return
+
+        template = tables_map.get_element("config:config-item-map-entry")
+        if template is None:
+            return
+        template_entry = cast(ConfigItemMapEntry, template)
+
+        # Replace table view entries with our sheet names.
+        for child in list(tables_map.children):
+            tables_map.delete(child)
+
+        for name in table_names:
+            entry = cast(ConfigItemMapEntry, template_entry.clone)
+            entry.name = name
+
+            # Freeze first row (row index 1), no frozen columns.
+            _set_config_item(entry, name="HorizontalSplitMode", config_type="short", value=0)
+            _set_config_item(entry, name="HorizontalSplitPosition", config_type="int", value=0)
+            _set_config_item(entry, name="VerticalSplitMode", config_type="short", value=2)
+            _set_config_item(entry, name="VerticalSplitPosition", config_type="int", value=1)
+
+            tables_map.append(entry)
+    except Exception:
+        # Never fail report generation because of viewer-specific settings.
+        return
+
+
+def _col_letters(index_1_based: int) -> str:
+    """Convert 1-based column index to spreadsheet letters (A, B, ..., AA, ...)."""
+
+    if index_1_based <= 0:
+        return "A"
+    n = index_1_based
+    out: list[str] = []
+    while n:
+        n, rem = divmod(n - 1, 26)
+        out.append(chr(ord("A") + rem))
+    return "".join(reversed(out))
+
+
+def _quote_sheet_name_for_range(name: str) -> str:
+    # ODF range addresses use single quotes around sheet names.
+    safe = (name or "").replace("'", "''")
+    return f"'{safe}'"
+
+
+def _enable_autofilter(doc: Document, sheet_ranges: list[tuple[str, int, int]]) -> None:
+    """Best-effort: enable auto filter dropdowns for each sheet.
+
+    LibreOffice/Calc stores autofilter definitions in content.xml under
+    <table:database-ranges>. We create a database range per sheet that covers
+    A1 through the last used cell and mark it as having headers.
+    """
+
+    try:
+        if not sheet_ranges:
+            return
+
+        # Remove any existing database-ranges to keep output deterministic.
+        for existing in doc.body.get_elements("table:database-ranges"):
+            doc.body.delete(existing)
+
+        db_ranges = Element.from_tag("table:database-ranges")
+
+        for sheet_name, ncols, nrows in sheet_ranges:
+            if not sheet_name or ncols <= 0 or nrows <= 0:
+                continue
+
+            end_col = _col_letters(ncols)
+            end_row = max(1, int(nrows))
+            addr = f"{_quote_sheet_name_for_range(sheet_name)}.A1:{end_col}{end_row}"
+
+            db = Element.from_tag("table:database-range")
+            db.set_attribute("table:name", _make_style_name("db", sheet_name))
+            db.set_attribute("table:target-range-address", addr)
+            db.set_attribute("table:display-filter-buttons", "true")
+            db.set_attribute("table:contains-header", "true")
+
+            # Empty filter element; viewers typically treat this as “autofilter on”.
+            flt = Element.from_tag("table:filter")
+            flt.set_attribute("table:display-filter-buttons", "true")
+            db.append(flt)
+
+            db_ranges.append(db)
+
+        doc.body.append(db_ranges)
+    except Exception:
+        return
 
 
 @dataclass(frozen=True)
@@ -161,8 +333,13 @@ class WriteOutputAction:
             codebook_topics=config.topics,
         )
 
-        self._append_summary_sheet(doc, summary_rows, config=config)
-        self._append_transcript_sheets(doc, per_doc_rows, config=config)
+        sheet_ranges: list[tuple[str, int, int]] = []
+
+        sheet_ranges.append(self._append_summary_sheet(doc, summary_rows, config=config))
+        sheet_ranges.extend(self._append_transcript_sheets(doc, per_doc_rows, config=config))
+
+        _freeze_first_row_in_settings(doc)
+        _enable_autofilter(doc, sheet_ranges)
 
         outfile.parent.mkdir(parents=True, exist_ok=True)
         doc.save(outfile)
@@ -507,7 +684,7 @@ class WriteOutputAction:
         rows: list[dict[str, Any]],
         *,
         config: InterviewConfig,
-    ) -> None:
+    ) -> tuple[str, int, int]:
         """
         Add the summary sheet to the ODS document.
 
@@ -536,10 +713,75 @@ class WriteOutputAction:
         if require_evidence:
             columns.append(("example_quote", "Example quote"))
 
+        # Create a bold header style and apply it to the first row's cells.
+        try:
+            header_style = cast(
+                Style,
+                Style(
+                "table-cell",
+                name=_make_style_name("hdr", "Summary"),
+                area="text",
+                bold=True,
+                ),
+            )
+        except Exception:
+            header_style = None
+        header_style = _insert_automatic_style(doc, header_style)
+
+        # Compute simple column widths based on content length (cheap heuristic)
+        col_max_chars: list[int] = [0] * len(columns)
+        for c_idx, (_k, title) in enumerate(columns):
+            col_max_chars[c_idx] = max(col_max_chars[c_idx], len(str(title or "")))
+        for r in rows:
+            for c_idx, (key, _title) in enumerate(columns):
+                val = _xml_safe_text(r.get(key, ""))
+                col_max_chars[c_idx] = max(col_max_chars[c_idx], len(str(val)))
+
+        # Create and append column styles (table-column) to set widths.
+        for c_idx, chars in enumerate(col_max_chars, start=1):
+            # simple width heuristic: 0.12 cm per character, clamp to [3cm, 24cm]
+            try:
+                width_cm = max(3.0, min(chars * 0.12, 24.0))
+                col_style = cast(
+                    Style,
+                    Style(
+                    "table-column",
+                    name=_make_style_name("col", "Summary", suffix=str(c_idx)),
+                    area="table-column",
+                    width=f"{width_cm:.2f}cm",
+                    ),
+                )
+                # If supported by the viewer, prefer optimal width.
+                col_style.set_properties(
+                    {"style:use-optimal-column-width": "true"},
+                    area="table-column",
+                )
+                col_style = _insert_automatic_style(doc, col_style)
+                if col_style is None:
+                    raise RuntimeError("style insert failed")
+                col = Column(style=col_style.name)
+                table.append(col)
+            except Exception:
+                # If style/column creation fails, continue without widths
+                pass
+
         header = Row()
         for _key, title in columns:
-            header.append_cell(Cell(text=_xml_safe_text(title)))
-        table.append_row(header)
+            cell = Cell(text=_xml_safe_text(title))
+            if header_style is not None:
+                try:
+                    cell.style = header_style
+                except Exception:
+                    pass
+            header.append_cell(cell)
+        # Put header row inside a table-header-rows element so it is treated
+        # as a sheet header by many spreadsheet viewers (helps freezing).
+        try:
+            hdr_group = Element.from_tag("table:table-header-rows")
+            hdr_group.append(header)
+            table.append(hdr_group)
+        except Exception:
+            table.append_row(header)
 
         for r in rows:
             row = Row()
@@ -552,13 +794,16 @@ class WriteOutputAction:
 
         doc.body.append(table)
 
+        # (sheet name, columns, rows)
+        return ("Summary", len(columns), 1 + len(rows))
+
     def _append_transcript_sheets(
         self,
         doc: Document,
         per_doc: list[dict[str, Any]],
         *,
         config: InterviewConfig,
-    ) -> None:
+    ) -> list[tuple[str, int, int]]:
         """
         Add one sheet per transcript with the full evidence track record.
 
@@ -595,12 +840,16 @@ class WriteOutputAction:
         columns.extend(
             [
                 ("researcher_decision", "Researcher Decision (accepted/modified/rejected)"),
-                ("researcher_comment", "Researcher Comment"),
+                ("final_topic", "Final Topic"),
+                ("final_orientation", "Final Orientation"),
+                ("researcher_comment", "Comment"),
                 ("where_found", "Where Found"),
             ]
         )
         if require_evidence:
             columns.append(("evidence", "Evidence Quote"))
+
+        out: list[tuple[str, int, int]] = []
 
         for entry in per_doc:
             name = str(entry.get("sheet_name") or "Transcript")
@@ -610,10 +859,74 @@ class WriteOutputAction:
             print(f"Writing sheet: {name}")
             table = Table(name)
 
+            # Create header style for bold first row
+            try:
+                header_style = cast(
+                    Style,
+                    Style(
+                    "table-cell",
+                    name=_make_style_name("hdr", name),
+                    area="text",
+                    bold=True,
+                    ),
+                )
+            except Exception:
+                header_style = None
+            header_style = _insert_automatic_style(doc, header_style)
+
+            # Compute column widths from header and data
+            rows = entry.get("rows") or []
+            col_max_chars: list[int] = [0] * len(columns)
+            for c_idx, (_k, title) in enumerate(columns):
+                col_max_chars[c_idx] = max(col_max_chars[c_idx], len(str(title or "")))
+            if isinstance(rows, list):
+                for r in rows:
+                    if not isinstance(r, dict):
+                        continue
+                    for c_idx, (key, _title) in enumerate(columns):
+                        val = _xml_safe_text(r.get(key, ""))
+                        col_max_chars[c_idx] = max(col_max_chars[c_idx], len(str(val)))
+
+            # Create and append column styles (table-column)
+            for c_idx, chars in enumerate(col_max_chars, start=1):
+                try:
+                    width_cm = max(4.0, min(chars * 0.12, 24.0))
+                    col_style = cast(
+                        Style,
+                        Style(
+                        "table-column",
+                        name=_make_style_name("col", name, suffix=str(c_idx)),
+                        area="table-column",
+                        width=f"{width_cm:.2f}cm",
+                        ),
+                    )
+                    col_style.set_properties(
+                        {"style:use-optimal-column-width": "true"},
+                        area="table-column",
+                    )
+                    col_style = _insert_automatic_style(doc, col_style)
+                    if col_style is None:
+                        raise RuntimeError("style insert failed")
+                    col = Column(style=col_style.name)
+                    table.append(col)
+                except Exception:
+                    pass
+
             header = Row()
             for _key, title in columns:
-                header.append_cell(Cell(text=_xml_safe_text(title)))
-            table.append_row(header)
+                cell = Cell(text=_xml_safe_text(title))
+                if header_style is not None:
+                    try:
+                        cell.style = header_style
+                    except Exception:
+                        pass
+                header.append_cell(cell)
+            try:
+                hdr_group = Element.from_tag("table:table-header-rows")
+                hdr_group.append(header)
+                table.append(hdr_group)
+            except Exception:
+                table.append_row(header)
 
             rows = entry.get("rows")
             if isinstance(rows, list):
@@ -626,6 +939,10 @@ class WriteOutputAction:
                     table.append_row(row)
 
             doc.body.append(table)
+
+            out.append((name, len(columns), 1 + (len(rows) if isinstance(rows, list) else 0)))
+
+        return out
 
     def _sheet_name(self, *, display_id: str) -> str:
         """Determine a human-readable sheet name for the ODS.
