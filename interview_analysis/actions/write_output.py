@@ -336,6 +336,7 @@ class WriteOutputAction:
         sheet_ranges: list[tuple[str, int, int]] = []
 
         sheet_ranges.append(self._append_summary_sheet(doc, summary_rows, config=config))
+        sheet_ranges.append(self._append_final_count_sheet(doc))
         sheet_ranges.extend(self._append_transcript_sheets(doc, per_doc_rows, config=config))
 
         _freeze_first_row_in_settings(doc)
@@ -797,6 +798,89 @@ class WriteOutputAction:
         # (sheet name, columns, rows)
         return ("Summary", len(columns), 1 + len(rows))
 
+    def _append_final_count_sheet(self, doc: Document) -> tuple[str, int, int]:
+        """Add a header-only sheet for manual final counting.
+
+        This sheet is intentionally empty except for the header row, to be used
+        by researchers when consolidating final codes across interviews.
+        """
+
+        sheet_name = "Final Count"
+        print(f"Writing sheet: {sheet_name}")
+
+        table = Table(sheet_name)
+
+        columns: list[str] = [
+            "Final Topic",
+            "Final Orientation",
+            "Rationale / Comment",
+            "Interview",
+        ]
+
+        # Create a bold header style and apply it to the first row's cells.
+        try:
+            header_style = cast(
+                Style,
+                Style(
+                    "table-cell",
+                    name=_make_style_name("hdr", sheet_name),
+                    area="text",
+                    bold=True,
+                ),
+            )
+        except Exception:
+            header_style = None
+        header_style = _insert_automatic_style(doc, header_style)
+
+        # Set basic column widths based on header text.
+        for c_idx, title in enumerate(columns, start=1):
+            try:
+                chars = len(str(title or ""))
+                width_cm = max(4.0, min(chars * 0.16, 24.0))
+                col_style = cast(
+                    Style,
+                    Style(
+                        "table-column",
+                        name=_make_style_name("col", sheet_name, suffix=str(c_idx)),
+                        area="table-column",
+                        width=f"{width_cm:.2f}cm",
+                    ),
+                )
+                col_style.set_properties(
+                    {"style:use-optimal-column-width": "true"},
+                    area="table-column",
+                )
+                col_style = _insert_automatic_style(doc, col_style)
+                if col_style is None:
+                    raise RuntimeError("style insert failed")
+                table.append(Column(style=col_style.name))
+            except Exception:
+                pass
+
+        header = Row()
+        for title in columns:
+            cell = Cell(text=_xml_safe_text(title))
+            if header_style is not None:
+                try:
+                    cell.style = header_style
+                except Exception:
+                    pass
+            header.append_cell(cell)
+
+        # Put the header row inside a table-header-rows element so it is treated
+        # as a sheet header by many spreadsheet viewers.
+        try:
+            hdr_group = Element.from_tag("table:table-header-rows")
+            hdr_group.append(header)
+            table.append(hdr_group)
+        except Exception:
+            table.append_row(header)
+
+        doc.body.append(table)
+
+        # (sheet name, columns, rows)
+        return (sheet_name, len(columns), 1)
+
     def _append_transcript_sheets(
         self,
         doc: Document,
@@ -817,7 +901,7 @@ class WriteOutputAction:
             None
         """
 
-        used_names: set[str] = {"Summary"}
+        used_names: set[str] = {"Summary", "Final Count"}
 
         allow_secondary = bool(getattr(config.analysis, "allow_secondary_assignments", False))
         llm_guidance = getattr(config.analysis, "llm_guidance", None)
